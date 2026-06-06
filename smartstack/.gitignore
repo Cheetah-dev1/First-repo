@@ -1,0 +1,18 @@
+# Environment variables — NEVER commit the real .env
+.env
+
+# OAuth tokens and client secrets — contain sensitive credentials
+credentials/*.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.mypy_cache/
+.ruff_cache/
+
+# Streamlit
+.streamlit/
+
+# macOS
+.DS_Store
