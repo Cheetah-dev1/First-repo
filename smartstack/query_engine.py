@@ -2,7 +2,7 @@
 query_engine.py — Natural-language Q&A against logged document summaries.
 
 Fetches all rows from the SmartStack Log spreadsheet, constructs a context
-block, and asks Claude to answer the user's question based solely on that
+block, and asks Gemini to answer the user's question based solely on that
 context.
 """
 
@@ -10,13 +10,14 @@ import logging
 import time
 from typing import Optional
 
-import anthropic
+import google.generativeai as genai
+from google.api_core import exceptions as google_exceptions
 
 from config import (
-    ANTHROPIC_API_KEY,
-    CLAUDE_MODEL,
-    CLAUDE_MAX_TOKENS,
-    CLAUDE_RETRY_COUNT,
+    GEMINI_API_KEY,
+    GEMINI_MODEL,
+    MAX_TOKENS,
+    RETRY_COUNT,
 )
 from sheets_logger import fetch_all_logs
 
@@ -44,16 +45,16 @@ def answer_question(question: str) -> str:
     The function:
     1. Fetches all logged summaries from the sheet.
     2. Constructs a context block from those summaries.
-    3. Sends the context + question to Claude.
-    4. Returns Claude's answer as a plain string.
+    3. Sends the context + question to Gemini.
+    4. Returns Gemini's answer as a plain string.
 
-    Retries up to ``CLAUDE_RETRY_COUNT`` times on transient API failures.
+    Retries up to ``RETRY_COUNT`` times on transient API failures.
 
     Args:
         question: The user's natural-language question.
 
     Returns:
-        Claude's answer string, or a friendly "no data" message if the
+        Gemini's answer string, or a friendly "no data" message if the
         sheet is empty.
 
     Raises:
@@ -67,7 +68,7 @@ def answer_question(question: str) -> str:
 
     context = _build_context(logs)
     logger.info(
-        "Sending question to Claude with context from %d document(s).", len(logs)
+        "Sending question to Gemini with context from %d document(s).", len(logs)
     )
 
     user_message = (
@@ -77,46 +78,54 @@ def answer_question(question: str) -> str:
         f"My question: {question}"
     )
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel(
+        model_name=GEMINI_MODEL,
+        system_instruction=_SYSTEM_PROMPT,
+        generation_config=genai.GenerationConfig(
+            max_output_tokens=MAX_TOKENS,
+        ),
+    )
+
     last_error: Optional[Exception] = None
 
-    for attempt in range(1, CLAUDE_RETRY_COUNT + 1):
+    for attempt in range(1, RETRY_COUNT + 1):
         try:
-            response = client.messages.create(
-                model=CLAUDE_MODEL,
-                max_tokens=CLAUDE_MAX_TOKENS,
-                system=_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_message}],
-            )
-            answer: str = response.content[0].text.strip()
+            response = model.generate_content(user_message)
+            answer: str = response.text.strip()
             logger.info("Received answer (%d chars).", len(answer))
             return answer
 
-        except (anthropic.APIError, anthropic.APIConnectionError) as exc:
+        except (
+            google_exceptions.ServiceUnavailable,
+            google_exceptions.InternalServerError,
+            google_exceptions.ResourceExhausted,
+            google_exceptions.GoogleAPIError,
+        ) as exc:
             last_error = exc
             wait = 2 ** attempt
             logger.warning(
                 "API error on attempt %d: %s — retrying in %ds.", attempt, exc, wait
             )
-            if attempt < CLAUDE_RETRY_COUNT:
+            if attempt < RETRY_COUNT:
                 time.sleep(wait)
 
     raise RuntimeError(
-        f"Query engine failed after {CLAUDE_RETRY_COUNT} attempts. "
+        f"Query engine failed after {RETRY_COUNT} attempts. "
         f"Last error: {last_error}"
     )
 
 
 def _build_context(logs: list[dict]) -> str:
     """
-    Format a list of log dicts into a numbered context block for Claude.
+    Format a list of log dicts into a numbered context block for Gemini.
 
     Args:
         logs: List of dicts from ``fetch_all_logs()``, each containing
               at minimum ``Filename``, ``Category``, ``Topic``, ``Summary``.
 
     Returns:
-        A formatted multi-line string ready for inclusion in a Claude prompt.
+        A formatted multi-line string ready for inclusion in a Gemini prompt.
     """
     sections: list[str] = []
     for i, entry in enumerate(logs, start=1):

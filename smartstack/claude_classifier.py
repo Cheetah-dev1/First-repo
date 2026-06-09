@@ -1,7 +1,7 @@
 """
-claude_classifier.py — Claude-powered PDF classification for SmartStack.
+claude_classifier.py — Gemini-powered PDF classification for SmartStack.
 
-Sends extracted PDF text to the Claude API and parses a structured JSON
+Sends extracted PDF text to the Gemini API and parses a structured JSON
 response containing the document category, topic, and a short summary.
 Includes retry logic for transient API failures.
 """
@@ -11,18 +11,18 @@ import logging
 import time
 from typing import Optional
 
-import anthropic
+import google.generativeai as genai
+from google.api_core import exceptions as google_exceptions
 
 from config import (
-    ANTHROPIC_API_KEY,
-    CLAUDE_MODEL,
-    CLAUDE_MAX_TOKENS,
-    CLAUDE_RETRY_COUNT,
+    GEMINI_API_KEY,
+    GEMINI_MODEL,
+    MAX_TOKENS,
+    RETRY_COUNT,
 )
 
 logger = logging.getLogger(__name__)
 
-# The exact JSON shape we expect Claude to return.
 _EXPECTED_KEYS = {"category", "topic", "summary"}
 _VALID_CATEGORIES = {"Study", "College Admin", "Personal/Fun"}
 
@@ -50,10 +50,10 @@ def classify_document(
     filename: str = "unknown.pdf",
 ) -> dict:
     """
-    Classify a document using Claude and return structured metadata.
+    Classify a document using Gemini and return structured metadata.
 
-    Sends *text* to the configured Claude model and parses the JSON response.
-    Retries up to ``CLAUDE_RETRY_COUNT`` times on transient failures, using
+    Sends *text* to the configured Gemini model and parses the JSON response.
+    Retries up to ``RETRY_COUNT`` times on transient failures, using
     exponential back-off (2 s, 4 s, 8 s …).
 
     Args:
@@ -67,7 +67,16 @@ def classify_document(
         RuntimeError: When all retry attempts are exhausted or the API
                       consistently returns malformed JSON.
     """
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    genai.configure(api_key=GEMINI_API_KEY)
+
+    model = genai.GenerativeModel(
+        model_name=GEMINI_MODEL,
+        system_instruction=_SYSTEM_PROMPT,
+        generation_config=genai.GenerationConfig(
+            response_mime_type="application/json",
+            max_output_tokens=MAX_TOKENS,
+        ),
+    )
 
     user_message = (
         f"Please classify the following document extracted from '{filename}':\n\n"
@@ -76,38 +85,32 @@ def classify_document(
 
     last_error: Optional[Exception] = None
 
-    for attempt in range(1, CLAUDE_RETRY_COUNT + 1):
+    for attempt in range(1, RETRY_COUNT + 1):
         logger.info(
-            "Classifying '%s' — attempt %d/%d.", filename, attempt, CLAUDE_RETRY_COUNT
+            "Classifying '%s' — attempt %d/%d.", filename, attempt, RETRY_COUNT
         )
         try:
-            response = client.messages.create(
-                model=CLAUDE_MODEL,
-                max_tokens=CLAUDE_MAX_TOKENS,
-                system=_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_message}],
-            )
-
-            raw_content = response.content[0].text.strip()
-            logger.debug("Raw Claude response for '%s': %s", filename, raw_content)
+            response = model.generate_content(user_message)
+            raw_content = response.text.strip()
+            logger.debug("Raw Gemini response for '%s': %s", filename, raw_content)
 
             parsed = _parse_and_validate(raw_content, filename)
-            logger.info(
-                "Classified '%s' as '%s'.", filename, parsed["category"]
-            )
+            logger.info("Classified '%s' as '%s'.", filename, parsed["category"])
             return parsed
 
-        except (anthropic.APIError, anthropic.APIConnectionError) as api_exc:
+        except (
+            google_exceptions.ServiceUnavailable,
+            google_exceptions.InternalServerError,
+            google_exceptions.ResourceExhausted,
+            google_exceptions.GoogleAPIError,
+        ) as api_exc:
             last_error = api_exc
-            wait = 2 ** attempt  # 2, 4, 8 seconds …
+            wait = 2 ** attempt
             logger.warning(
                 "API error on attempt %d for '%s': %s — retrying in %ds.",
-                attempt,
-                filename,
-                api_exc,
-                wait,
+                attempt, filename, api_exc, wait,
             )
-            if attempt < CLAUDE_RETRY_COUNT:
+            if attempt < RETRY_COUNT:
                 time.sleep(wait)
 
         except ValueError as val_exc:
@@ -115,16 +118,13 @@ def classify_document(
             wait = 2 ** attempt
             logger.warning(
                 "JSON validation failed on attempt %d for '%s': %s — retrying in %ds.",
-                attempt,
-                filename,
-                val_exc,
-                wait,
+                attempt, filename, val_exc, wait,
             )
-            if attempt < CLAUDE_RETRY_COUNT:
+            if attempt < RETRY_COUNT:
                 time.sleep(wait)
 
     raise RuntimeError(
-        f"Classification failed for '{filename}' after {CLAUDE_RETRY_COUNT} attempts. "
+        f"Classification failed for '{filename}' after {RETRY_COUNT} attempts. "
         f"Last error: {last_error}"
     )
 
@@ -134,7 +134,7 @@ def _parse_and_validate(raw: str, filename: str) -> dict:
     Parse *raw* as JSON and validate it matches the expected schema.
 
     Args:
-        raw:      Raw string returned by Claude.
+        raw:      Raw string returned by Gemini.
         filename: Used in error messages for context.
 
     Returns:
@@ -143,40 +143,33 @@ def _parse_and_validate(raw: str, filename: str) -> dict:
     Raises:
         ValueError: If JSON is malformed or the schema is incorrect.
     """
-    # Strip accidental markdown code fences if Claude slips one in
     cleaned = raw.strip()
     if cleaned.startswith("```"):
         lines = cleaned.splitlines()
-        # Remove first and last fence lines
-        inner = [
-            l for l in lines if not l.strip().startswith("```")
-        ]
+        inner = [l for l in lines if not l.strip().startswith("```")]
         cleaned = "\n".join(inner).strip()
 
     try:
         data: dict = json.loads(cleaned)
     except json.JSONDecodeError as exc:
         raise ValueError(
-            f"Claude returned invalid JSON for '{filename}': {exc}\nRaw: {cleaned!r}"
+            f"Gemini returned invalid JSON for '{filename}': {exc}\nRaw: {cleaned!r}"
         ) from exc
 
     missing = _EXPECTED_KEYS - data.keys()
     if missing:
         raise ValueError(
-            f"Claude response missing keys {missing} for '{filename}'. "
+            f"Gemini response missing keys {missing} for '{filename}'. "
             f"Got: {list(data.keys())}"
         )
 
     category = data.get("category", "")
     if category not in _VALID_CATEGORIES:
-        # Attempt a fuzzy fix for common Claude deviations
         fixed = _normalise_category(category)
         if fixed:
             logger.warning(
                 "Normalised category '%s' → '%s' for '%s'.",
-                category,
-                fixed,
-                filename,
+                category, fixed, filename,
             )
             data["category"] = fixed
         else:
@@ -197,7 +190,7 @@ def _normalise_category(raw_category: str) -> Optional[str]:
     Attempt to map a non-standard category string to one of the valid values.
 
     Args:
-        raw_category: Category string returned by Claude.
+        raw_category: Category string returned by Gemini.
 
     Returns:
         A valid category string, or ``None`` if no mapping is found.

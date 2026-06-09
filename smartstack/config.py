@@ -35,12 +35,12 @@ OAUTH_CLIENT_SECRET_PATH: str = os.path.join(
 )
 
 # ---------------------------------------------------------------------------
-# Anthropic
+# Gemini API
 # ---------------------------------------------------------------------------
-ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL: str = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514")
-CLAUDE_MAX_TOKENS: int = int(os.getenv("CLAUDE_MAX_TOKENS", "1024"))
-CLAUDE_RETRY_COUNT: int = int(os.getenv("CLAUDE_RETRY_COUNT", "3"))
+GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", "1024"))
+RETRY_COUNT: int = int(os.getenv("RETRY_COUNT", "3"))
 
 # ---------------------------------------------------------------------------
 # Google Drive folder names
@@ -75,10 +75,11 @@ MAX_WORDS: int = int(os.getenv("MAX_WORDS", "3000"))
 
 def validate_config() -> None:
     """Raise ValueError if mandatory environment variables are missing."""
-    if not ANTHROPIC_API_KEY:
+    if not GEMINI_API_KEY:
         raise ValueError(
-            "ANTHROPIC_API_KEY is not set. "
-            "Add it to your .env file or environment."
+            "GEMINI_API_KEY is not set. "
+            "Add it to your .env file — get a free key at "
+            "https://aistudio.google.com/apikey"
         )
     if not os.path.isfile(OAUTH_CLIENT_SECRET_PATH):
         raise ValueError(
