@@ -235,3 +235,54 @@ def fetch_all_logs() -> list[dict]:
 
     logger.info("Fetched %d log entries from sheet.", len(logs))
     return logs
+
+
+def update_row_category(filename: str, new_category: str) -> bool:
+    """
+    Find the row for *filename* in the Sheet and update its Category column.
+
+    Scans column A (Filename) for a matching entry and overwrites column B
+    (Category) with *new_category*.  Only the first matching row is updated.
+
+    Args:
+        filename:     Filename to search for in column A.
+        new_category: New category value to write into column B.
+
+    Returns:
+        ``True`` if a matching row was found and updated, ``False`` otherwise.
+
+    Raises:
+        HttpError: Propagated from the Sheets API.
+    """
+    service = _get_sheets_service()
+    spreadsheet_id = _get_or_create_spreadsheet(service)
+
+    result = (
+        service.spreadsheets()
+        .values()
+        .get(spreadsheetId=spreadsheet_id, range="Log!A:A")
+        .execute()
+    )
+    rows = result.get("values", [])
+
+    row_index: Optional[int] = None
+    for i, row in enumerate(rows):
+        if row and row[0] == filename:
+            row_index = i + 1  # Sheets API uses 1-based row numbers
+            break
+
+    if row_index is None:
+        logger.warning("'%s' not found in sheet — cannot update category.", filename)
+        return False
+
+    # Column B is the Category column (index 2 in A1 notation)
+    cell_range = f"Log!B{row_index}"
+    service.spreadsheets().values().update(
+        spreadsheetId=spreadsheet_id,
+        range=cell_range,
+        valueInputOption="RAW",
+        body={"values": [[new_category]]},
+    ).execute()
+
+    logger.info("Updated category for '%s' → '%s' in sheet.", filename, new_category)
+    return True

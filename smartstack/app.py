@@ -41,19 +41,22 @@ st.set_page_config(
 # ---------------------------------------------------------------------------
 def _import_modules():
     """Import project modules lazily to avoid blocking the initial render."""
-    from drive_manager import scan_root_for_pdfs, download_pdf_content, move_pdf_to_category
+    from drive_manager import scan_root_for_pdfs, download_pdf_content, move_pdf_to_category, reclassify_file
     from pdf_processor import extract_text_from_bytes
     from claude_classifier import classify_document
-    from sheets_logger import log_processed_file
+    from sheets_logger import log_processed_file, fetch_all_logs, update_row_category
     from query_engine import answer_question
     from config import validate_config
     return (
         scan_root_for_pdfs,
         download_pdf_content,
         move_pdf_to_category,
+        reclassify_file,
         extract_text_from_bytes,
         classify_document,
         log_processed_file,
+        fetch_all_logs,
+        update_row_category,
         answer_question,
         validate_config,
     )
@@ -66,7 +69,7 @@ st.sidebar.title("📚 SmartStack")
 st.sidebar.markdown("---")
 page = st.sidebar.radio(
     "Navigate",
-    ["Organise My Drive", "Ask a Question"],
+    ["Organise My Drive", "Ask a Question", "Reclassify Files"],
     index=0,
 )
 st.sidebar.markdown("---")
@@ -97,9 +100,12 @@ def _run_organise_flow() -> None:
         scan_root_for_pdfs,
         download_pdf_content,
         move_pdf_to_category,
+        _reclassify,
         extract_text_from_bytes,
         classify_document,
         log_processed_file,
+        _fetch_logs,
+        _update_row,
         _answer_question,
         validate_config,
     ) = _import_modules()
@@ -234,8 +240,8 @@ def page_ask() -> None:
 def _run_query_flow(question: str) -> None:
     """Send *question* to Claude via the query engine and display the answer."""
     (
-        _scan, _download, _move,
-        _extract, _classify, _log,
+        _scan, _download, _move, _reclassify,
+        _extract, _classify, _log, _fetch, _update,
         answer_question,
         validate_config,
     ) = _import_modules()
@@ -280,9 +286,98 @@ def _run_query_flow(question: str) -> None:
 
 
 # ===========================================================================
+# PAGE 3 — Reclassify Files
+# ===========================================================================
+_CATEGORIES = ["Study", "College Admin", "Personal/Fun"]
+
+
+def page_reclassify() -> None:
+    """Render the 'Reclassify Files' page."""
+    st.title("🔄 Reclassify Files")
+    st.markdown(
+        "Change the category of any processed file. "
+        "SmartStack will update the Google Sheet **and** move the file in your Drive."
+    )
+
+    (
+        _scan, _download, _move, reclassify_file,
+        _extract, _classify, _log, fetch_all_logs, update_row_category,
+        _answer,
+        validate_config,
+    ) = _import_modules()
+
+    try:
+        validate_config()
+    except ValueError as exc:
+        st.error(f"⚠️ Configuration error: {exc}")
+        return
+
+    with st.spinner("Loading your logged files…"):
+        try:
+            logs = fetch_all_logs()
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"❌ Failed to load logs: {exc}")
+            logger.exception("Failed to fetch logs for reclassify page.")
+            return
+
+    if not logs:
+        st.info("📭 No files logged yet. Go to **Organise My Drive** first.")
+        return
+
+    st.markdown(f"**{len(logs)} file(s) logged.** Select a new category and click Reclassify.")
+    st.markdown("---")
+
+    for entry in logs:
+        filename = entry.get("Filename", "Unknown")
+        current_category = entry.get("Category", "Study")
+        topic = entry.get("Topic", "")
+
+        col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
+
+        with col1:
+            st.markdown(f"**{filename}**")
+            if topic:
+                st.caption(topic)
+
+        with col2:
+            st.markdown(f"Current: `{current_category}`")
+
+        with col3:
+            new_category = st.selectbox(
+                "New category",
+                _CATEGORIES,
+                index=_CATEGORIES.index(current_category) if current_category in _CATEGORIES else 0,
+                key=f"cat_{filename}",
+                label_visibility="collapsed",
+            )
+
+        with col4:
+            if st.button("Reclassify", key=f"btn_{filename}"):
+                if new_category == current_category:
+                    st.warning("Same category — nothing to change.")
+                else:
+                    with st.spinner(f"Moving '{filename}'…"):
+                        try:
+                            reclassify_file(filename, new_category)
+                            update_row_category(filename, new_category)
+                            st.success(f"Moved to **{new_category}**!")
+                            logger.info(
+                                "Reclassified '%s': '%s' → '%s'.",
+                                filename, current_category, new_category,
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            st.error(f"❌ {exc}")
+                            logger.exception("Reclassify failed for '%s'.", filename)
+
+        st.divider()
+
+
+# ===========================================================================
 # Router
 # ===========================================================================
 if page == "Organise My Drive":
     page_organise()
 elif page == "Ask a Question":
     page_ask()
+elif page == "Reclassify Files":
+    page_reclassify()

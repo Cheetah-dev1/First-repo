@@ -240,3 +240,61 @@ def download_pdf_content(file_id: str) -> bytes:
     content: bytes = request.execute()
     logger.debug("Downloaded %d bytes for file id=%s.", len(content), file_id)
     return content
+
+
+def find_file_by_name(filename: str) -> Optional[str]:
+    """
+    Search Google Drive for a PDF with the given filename and return its file ID.
+
+    Searches across all folders (not just root) so it works after a file has
+    already been moved into a category subfolder.
+
+    Args:
+        filename: Exact filename to search for (including .pdf extension).
+
+    Returns:
+        Drive file ID string if found, or ``None`` if not found.
+    """
+    service = _get_drive_service()
+    # Escape single quotes in filename for the query string
+    safe_name = filename.replace("'", "\\'")
+    query = (
+        f"name = '{safe_name}' "
+        f"and mimeType = '{_MIME_PDF}' "
+        f"and trashed = false"
+    )
+    results = (
+        service.files()
+        .list(q=query, spaces="drive", fields="files(id, name)")
+        .execute()
+    )
+    files = results.get("files", [])
+    if files:
+        logger.info("Found file '%s' with id=%s.", filename, files[0]["id"])
+        return files[0]["id"]
+    logger.warning("File '%s' not found in Drive.", filename)
+    return None
+
+
+def reclassify_file(filename: str, new_category: str) -> None:
+    """
+    Find a PDF by name anywhere in Drive and move it to a new category folder.
+
+    Args:
+        filename:     Exact filename of the PDF to reclassify.
+        new_category: Target category — one of ``"Study"``, ``"College Admin"``,
+                      ``"Personal/Fun"``.
+
+    Raises:
+        FileNotFoundError: If the file cannot be found in Drive.
+        ValueError:        If *new_category* is not a recognised value.
+        HttpError:         Propagated from the Drive API.
+    """
+    file_id = find_file_by_name(filename)
+    if file_id is None:
+        raise FileNotFoundError(
+            f"Could not find '{filename}' in Google Drive. "
+            "It may have been deleted or renamed manually."
+        )
+    move_pdf_to_category(file_id, new_category)
+    logger.info("Reclassified '%s' → '%s'.", filename, new_category)
