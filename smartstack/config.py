@@ -9,7 +9,9 @@ import os
 import logging
 from dotenv import load_dotenv
 
-load_dotenv()
+# Explicitly load .env from the same directory as this file so it always
+# wins regardless of where streamlit is launched from.
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 logger = logging.getLogger(__name__)
 
