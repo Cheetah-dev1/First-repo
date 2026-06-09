@@ -82,7 +82,6 @@ def classify_document(
             response = client.chat.completions.create(
                 model=GROQ_MODEL,
                 max_tokens=MAX_TOKENS,
-                response_format={"type": "json_object"},
                 messages=[
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user", "content": user_message},
