@@ -144,10 +144,18 @@ def _parse_and_validate(raw: str, filename: str) -> dict:
         ValueError: If JSON is malformed or the schema is incorrect.
     """
     cleaned = raw.strip()
+
+    # Strip markdown code fences if present
     if cleaned.startswith("```"):
         lines = cleaned.splitlines()
         inner = [l for l in lines if not l.strip().startswith("```")]
         cleaned = "\n".join(inner).strip()
+
+    # Extract just the JSON object — find the first { and last }
+    start = cleaned.find("{")
+    end = cleaned.rfind("}") + 1
+    if start != -1 and end > start:
+        cleaned = cleaned[start:end]
 
     try:
         data: dict = json.loads(cleaned)
