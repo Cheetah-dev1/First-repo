@@ -2,20 +2,18 @@
 query_engine.py — Natural-language Q&A against logged document summaries.
 
 Fetches all rows from the SmartStack Log spreadsheet, constructs a context
-block, and asks Gemini to answer the user's question based solely on that
-context.
+block, and asks Groq to answer the user's question based solely on that context.
 """
 
 import logging
 import time
 from typing import Optional
 
-import google.generativeai as genai
-from google.api_core import exceptions as google_exceptions
+from groq import Groq, APIError, APIConnectionError, RateLimitError
 
 from config import (
-    GEMINI_API_KEY,
-    GEMINI_MODEL,
+    GROQ_API_KEY,
+    GROQ_MODEL,
     MAX_TOKENS,
     RETRY_COUNT,
 )
@@ -45,8 +43,8 @@ def answer_question(question: str) -> str:
     The function:
     1. Fetches all logged summaries from the sheet.
     2. Constructs a context block from those summaries.
-    3. Sends the context + question to Gemini.
-    4. Returns Gemini's answer as a plain string.
+    3. Sends the context + question to Groq.
+    4. Returns Groq's answer as a plain string.
 
     Retries up to ``RETRY_COUNT`` times on transient API failures.
 
@@ -54,7 +52,7 @@ def answer_question(question: str) -> str:
         question: The user's natural-language question.
 
     Returns:
-        Gemini's answer string, or a friendly "no data" message if the
+        Groq's answer string, or a friendly "no data" message if the
         sheet is empty.
 
     Raises:
@@ -68,7 +66,7 @@ def answer_question(question: str) -> str:
 
     context = _build_context(logs)
     logger.info(
-        "Sending question to Gemini with context from %d document(s).", len(logs)
+        "Sending question to Groq with context from %d document(s).", len(logs)
     )
 
     user_message = (
@@ -78,30 +76,33 @@ def answer_question(question: str) -> str:
         f"My question: {question}"
     )
 
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel(
-        model_name=GEMINI_MODEL,
-        system_instruction=_SYSTEM_PROMPT,
-        generation_config=genai.GenerationConfig(
-            max_output_tokens=MAX_TOKENS,
-        ),
-    )
-
+    client = Groq(api_key=GROQ_API_KEY)
     last_error: Optional[Exception] = None
 
     for attempt in range(1, RETRY_COUNT + 1):
         try:
-            response = model.generate_content(user_message)
-            answer: str = response.text.strip()
+            response = client.chat.completions.create(
+                model=GROQ_MODEL,
+                max_tokens=MAX_TOKENS,
+                messages=[
+                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
+            )
+            answer: str = response.choices[0].message.content.strip()
             logger.info("Received answer (%d chars).", len(answer))
             return answer
 
-        except (
-            google_exceptions.ServiceUnavailable,
-            google_exceptions.InternalServerError,
-            google_exceptions.ResourceExhausted,
-            google_exceptions.GoogleAPIError,
-        ) as exc:
+        except RateLimitError as exc:
+            last_error = exc
+            wait = 2 ** attempt
+            logger.warning(
+                "Rate limit on attempt %d — retrying in %ds.", attempt, wait
+            )
+            if attempt < RETRY_COUNT:
+                time.sleep(wait)
+
+        except (APIError, APIConnectionError) as exc:
             last_error = exc
             wait = 2 ** attempt
             logger.warning(
@@ -118,14 +119,14 @@ def answer_question(question: str) -> str:
 
 def _build_context(logs: list[dict]) -> str:
     """
-    Format a list of log dicts into a numbered context block for Gemini.
+    Format a list of log dicts into a numbered context block for Groq.
 
     Args:
         logs: List of dicts from ``fetch_all_logs()``, each containing
               at minimum ``Filename``, ``Category``, ``Topic``, ``Summary``.
 
     Returns:
-        A formatted multi-line string ready for inclusion in a Gemini prompt.
+        A formatted multi-line string ready for inclusion in a Groq prompt.
     """
     sections: list[str] = []
     for i, entry in enumerate(logs, start=1):

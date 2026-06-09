@@ -1,7 +1,7 @@
 """
-claude_classifier.py — Gemini-powered PDF classification for SmartStack.
+claude_classifier.py — Groq-powered PDF classification for SmartStack.
 
-Sends extracted PDF text to the Gemini API and parses a structured JSON
+Sends extracted PDF text to the Groq API and parses a structured JSON
 response containing the document category, topic, and a short summary.
 Includes retry logic for transient API failures.
 """
@@ -11,12 +11,11 @@ import logging
 import time
 from typing import Optional
 
-import google.generativeai as genai
-from google.api_core import exceptions as google_exceptions
+from groq import Groq, APIError, APIConnectionError, RateLimitError
 
 from config import (
-    GEMINI_API_KEY,
-    GEMINI_MODEL,
+    GROQ_API_KEY,
+    GROQ_MODEL,
     MAX_TOKENS,
     RETRY_COUNT,
 )
@@ -50,10 +49,10 @@ def classify_document(
     filename: str = "unknown.pdf",
 ) -> dict:
     """
-    Classify a document using Gemini and return structured metadata.
+    Classify a document using Groq and return structured metadata.
 
-    Sends *text* to the configured Gemini model and parses the JSON response.
-    Retries up to ``RETRY_COUNT`` times on transient failures, using
+    Sends *text* to the configured Groq model and parses the JSON response.
+    Retries up to ``RETRY_COUNT`` times on transient failures using
     exponential back-off (2 s, 4 s, 8 s …).
 
     Args:
@@ -64,19 +63,9 @@ def classify_document(
         Dict with keys ``category``, ``topic``, and ``summary``.
 
     Raises:
-        RuntimeError: When all retry attempts are exhausted or the API
-                      consistently returns malformed JSON.
+        RuntimeError: When all retry attempts are exhausted.
     """
-    genai.configure(api_key=GEMINI_API_KEY)
-
-    model = genai.GenerativeModel(
-        model_name=GEMINI_MODEL,
-        system_instruction=_SYSTEM_PROMPT,
-        generation_config=genai.GenerationConfig(
-            response_mime_type="application/json",
-            max_output_tokens=MAX_TOKENS,
-        ),
-    )
+    client = Groq(api_key=GROQ_API_KEY)
 
     user_message = (
         f"Please classify the following document extracted from '{filename}':\n\n"
@@ -90,25 +79,37 @@ def classify_document(
             "Classifying '%s' — attempt %d/%d.", filename, attempt, RETRY_COUNT
         )
         try:
-            response = model.generate_content(user_message)
-            raw_content = response.text.strip()
-            logger.debug("Raw Gemini response for '%s': %s", filename, raw_content)
+            response = client.chat.completions.create(
+                model=GROQ_MODEL,
+                max_tokens=MAX_TOKENS,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
+            )
+            raw_content = response.choices[0].message.content.strip()
+            logger.debug("Raw Groq response for '%s': %s", filename, raw_content)
 
             parsed = _parse_and_validate(raw_content, filename)
             logger.info("Classified '%s' as '%s'.", filename, parsed["category"])
             return parsed
 
-        except (
-            google_exceptions.ServiceUnavailable,
-            google_exceptions.InternalServerError,
-            google_exceptions.ResourceExhausted,
-            google_exceptions.GoogleAPIError,
-        ) as api_exc:
-            last_error = api_exc
+        except RateLimitError as exc:
+            last_error = exc
+            wait = 2 ** attempt
+            logger.warning(
+                "Rate limit on attempt %d for '%s' — retrying in %ds.", attempt, filename, wait
+            )
+            if attempt < RETRY_COUNT:
+                time.sleep(wait)
+
+        except (APIError, APIConnectionError) as exc:
+            last_error = exc
             wait = 2 ** attempt
             logger.warning(
                 "API error on attempt %d for '%s': %s — retrying in %ds.",
-                attempt, filename, api_exc, wait,
+                attempt, filename, exc, wait,
             )
             if attempt < RETRY_COUNT:
                 time.sleep(wait)
@@ -134,7 +135,7 @@ def _parse_and_validate(raw: str, filename: str) -> dict:
     Parse *raw* as JSON and validate it matches the expected schema.
 
     Args:
-        raw:      Raw string returned by Gemini.
+        raw:      Raw string returned by Groq.
         filename: Used in error messages for context.
 
     Returns:
@@ -153,13 +154,13 @@ def _parse_and_validate(raw: str, filename: str) -> dict:
         data: dict = json.loads(cleaned)
     except json.JSONDecodeError as exc:
         raise ValueError(
-            f"Gemini returned invalid JSON for '{filename}': {exc}\nRaw: {cleaned!r}"
+            f"Groq returned invalid JSON for '{filename}': {exc}\nRaw: {cleaned!r}"
         ) from exc
 
     missing = _EXPECTED_KEYS - data.keys()
     if missing:
         raise ValueError(
-            f"Gemini response missing keys {missing} for '{filename}'. "
+            f"Groq response missing keys {missing} for '{filename}'. "
             f"Got: {list(data.keys())}"
         )
 
@@ -168,8 +169,7 @@ def _parse_and_validate(raw: str, filename: str) -> dict:
         fixed = _normalise_category(category)
         if fixed:
             logger.warning(
-                "Normalised category '%s' → '%s' for '%s'.",
-                category, fixed, filename,
+                "Normalised category '%s' → '%s' for '%s'.", category, fixed, filename
             )
             data["category"] = fixed
         else:
@@ -190,7 +190,7 @@ def _normalise_category(raw_category: str) -> Optional[str]:
     Attempt to map a non-standard category string to one of the valid values.
 
     Args:
-        raw_category: Category string returned by Gemini.
+        raw_category: Category string returned by Groq.
 
     Returns:
         A valid category string, or ``None`` if no mapping is found.
