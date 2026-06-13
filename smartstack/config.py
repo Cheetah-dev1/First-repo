@@ -81,7 +81,7 @@ SHEET_COLUMNS: list[str] = [
 # ---------------------------------------------------------------------------
 # PDF processing
 # ---------------------------------------------------------------------------
-MAX_WORDS: int = int(os.getenv("MAX_WORDS", "800"))
+MAX_WORDS: int = int(os.getenv("MAX_WORDS", "1500"))
 
 
 def validate_config() -> None:
