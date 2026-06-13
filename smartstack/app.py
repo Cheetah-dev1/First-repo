@@ -64,8 +64,42 @@ def _import_modules():
 
 
 # ---------------------------------------------------------------------------
-# Sidebar navigation
+# Sidebar — profile + navigation
 # ---------------------------------------------------------------------------
+def _render_sidebar_profile() -> None:
+    """Show Gmail profile picture and display name at the top of the sidebar."""
+    try:
+        from drive_manager import get_user_info
+        import requests as _req
+        user = get_user_info()
+        if user and user.get("picture"):
+            pic_resp = _req.get(user["picture"], timeout=5)
+            if pic_resp.status_code == 200:
+                import base64 as _b64
+                pic_b64 = _b64.b64encode(pic_resp.content).decode()
+                st.sidebar.markdown(
+                    f"""
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+                      <img src="data:image/jpeg;base64,{pic_b64}"
+                           style="width:42px;height:42px;border-radius:50%;object-fit:cover;border:2px solid #4f8ef7"/>
+                      <div>
+                        <div style="font-weight:600;font-size:0.9rem;line-height:1.2">{user['name']}</div>
+                        <div style="font-size:0.72rem;color:#888;line-height:1.2">{user['email']}</div>
+                      </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                return
+    except Exception:  # noqa: BLE001
+        pass
+    # Fallback — no profile yet (first run before auth)
+    st.sidebar.markdown(
+        "<div style='font-size:0.8rem;color:#888;margin-bottom:4px'>Sign in to see your profile</div>",
+        unsafe_allow_html=True,
+    )
+
+_render_sidebar_profile()
 st.sidebar.title("📚 SmartStack")
 st.sidebar.markdown("---")
 page = st.sidebar.radio(
@@ -75,8 +109,8 @@ page = st.sidebar.radio(
 )
 st.sidebar.markdown("---")
 st.sidebar.caption(
-    "SmartStack automatically organises your Google Drive PDFs using AI "
-    "and lets you ask questions about your study material."
+    "SmartStack uses AI to organise your Google Drive files and lets you "
+    "ask questions about your study material."
 )
 
 
@@ -89,7 +123,7 @@ def page_organise() -> None:
     st.markdown(
         "Click **Scan My Drive** to find loose files in your Drive root, "
         "classify them with AI, and move them into the right folders. "
-        "Supports PDF, Word, Excel, PowerPoint, and images."
+        "Supports PDF, Word, Excel, PowerPoint, images and videos."
     )
 
     if st.button("🔍 Scan My Drive", type="primary"):

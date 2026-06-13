@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 DRIVE_SCOPES: list[str] = [
     "https://www.googleapis.com/auth/drive",
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.profile",
+    "https://www.googleapis.com/auth/userinfo.email",
 ]
 SHEETS_SCOPES: list[str] = [
     "https://www.googleapis.com/auth/spreadsheets",

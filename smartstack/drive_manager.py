@@ -14,6 +14,8 @@ import logging
 import os
 from typing import Optional
 
+import requests as _requests
+
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -329,3 +331,55 @@ def reclassify_file(filename: str, new_category: str) -> None:
         )
     move_pdf_to_category(file_id, new_category)
     logger.info("Reclassified '%s' → '%s'.", filename, new_category)
+
+
+def get_user_info() -> Optional[dict]:
+    """
+    Return the signed-in Google user's display name, email, and profile
+    picture URL by calling the OAuth2 userinfo endpoint.
+
+    Requires the token to have been issued with the ``userinfo.profile`` and
+    ``userinfo.email`` scopes (added to ``DRIVE_SCOPES``).  Returns ``None``
+    silently if the token predates those scopes or any network error occurs.
+
+    Returns:
+        Dict with keys ``name``, ``email``, ``picture`` or ``None``.
+    """
+    try:
+        creds = _get_drive_credentials()
+        resp = _requests.get(
+            "https://www.googleapis.com/oauth2/v2/userinfo",
+            headers={"Authorization": f"Bearer {creds.token}"},
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            return {
+                "name": data.get("name", ""),
+                "email": data.get("email", ""),
+                "picture": data.get("picture", ""),
+            }
+        logger.warning("userinfo returned %d — token may lack profile scope.", resp.status_code)
+        return None
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Could not fetch user info: %s", exc)
+        return None
+
+
+def _get_drive_credentials():
+    """Return valid Drive credentials (re-authenticating if needed)."""
+    creds: Optional[Credentials] = None
+    if os.path.exists(DRIVE_TOKEN_PATH):
+        creds = Credentials.from_authorized_user_file(DRIVE_TOKEN_PATH, DRIVE_SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(
+                OAUTH_CLIENT_SECRET_PATH, DRIVE_SCOPES
+            )
+            creds = flow.run_local_server(port=0)
+        os.makedirs(os.path.dirname(DRIVE_TOKEN_PATH), exist_ok=True)
+        with open(DRIVE_TOKEN_PATH, "w") as f:
+            f.write(creds.to_json())
+    return creds
