@@ -702,23 +702,6 @@ def page_settings() -> None:
 
     st.divider()
 
-    # ── Classification Directives ─────────────────────────────────────────────
-    st.subheader("📋 Classification Directives")
-    st.caption("Plain-English rules the AI follows when classifying files. One rule per line.")
-    directives = st.text_area(
-        "Directives",
-        value=settings.get("directives", ""),
-        height=130,
-        placeholder=(
-            "Files with 'AIMUN' or 'MUN' in the name go to College Admin\n"
-            "Anything about Netflix or entertainment goes to Personal/Fun\n"
-            "Lecture notes and past papers go to Study"
-        ),
-        label_visibility="collapsed",
-    )
-
-    st.divider()
-
     # ── Token Usage ───────────────────────────────────────────────────────────
     st.subheader("📈 Token Usage (Today)")
     token_data = settings.get("token_usage", {})
@@ -776,7 +759,6 @@ def page_settings() -> None:
             "delay_seconds":  delay_secs,
         }
         new_settings["sheets"]     = {"sheet_name": sheet_name or "SmartStack Log"}
-        new_settings["directives"] = directives
         new_settings["theme"]      = theme_val
         save_settings(new_settings)
 
