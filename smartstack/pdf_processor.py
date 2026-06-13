@@ -8,12 +8,13 @@ Falls back to a friendly message for unreadable or unsupported files.
 import io
 import logging
 import os
+import base64
 
 import pdfplumber
 import pandas as pd
 from PIL import Image
 
-from config import MAX_WORDS
+from config import MAX_WORDS, GROQ_API_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -154,27 +155,60 @@ def _extract_pptx(file_bytes: bytes, filename: str) -> str:
 
 def _extract_image(file_bytes: bytes, filename: str) -> str:
     """
-    Extract text from an image using Tesseract OCR via pytesseract.
+    Describe and extract text from an image using Groq's vision model.
 
-    Falls back gracefully if Tesseract is not installed on the system.
+    Converts BMP/TIFF to PNG first (Groq only accepts JPEG/PNG/WEBP/GIF).
+    No system-level OCR tools required.
     """
-    try:
-        import pytesseract
-        image = Image.open(io.BytesIO(file_bytes))
-        text = pytesseract.image_to_string(image).strip()
-        if text:
-            logger.info("OCR extracted %d chars from '%s'.", len(text), filename)
-            return _truncate_to_words(text, MAX_WORDS)
-        return _NO_TEXT
-    except ImportError:
-        logger.warning("pytesseract not installed — returning image placeholder.")
-        return (
-            "[Image file detected. Install Tesseract OCR and pytesseract "
-            "to extract text from images automatically.]"
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("OCR failed for '%s': %s", filename, exc)
-        return _NO_TEXT
+    from groq import Groq
+
+    ext = os.path.splitext(filename)[1].lower()
+
+    # Groq vision supports jpeg, png, webp, gif — convert anything else to PNG
+    if ext in (".bmp", ".tiff", ".tif"):
+        img = Image.open(io.BytesIO(file_bytes))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        file_bytes = buf.getvalue()
+        media_type = "image/png"
+    elif ext in (".jpg", ".jpeg"):
+        media_type = "image/jpeg"
+    elif ext == ".webp":
+        media_type = "image/webp"
+    elif ext == ".gif":
+        media_type = "image/gif"
+    else:
+        media_type = "image/png"
+
+    image_b64 = base64.b64encode(file_bytes).decode("utf-8")
+
+    client = Groq(api_key=GROQ_API_KEY)
+    response = client.chat.completions.create(
+        model="llama-3.2-11b-vision-preview",
+        max_tokens=1024,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{media_type};base64,{image_b64}"},
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            "Describe this image in detail. "
+                            "If it contains text, transcribe it fully. "
+                            "If it is a document or form, describe its contents."
+                        ),
+                    },
+                ],
+            }
+        ],
+    )
+    text = response.choices[0].message.content.strip()
+    logger.info("Vision model described '%s' (%d chars).", filename, len(text))
+    return _truncate_to_words(text, MAX_WORDS) if text else _NO_TEXT
 
 
 def _truncate_to_words(text: str, max_words: int) -> str:
