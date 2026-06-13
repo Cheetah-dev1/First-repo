@@ -507,6 +507,51 @@ def page_reclassify() -> None:
         st.info("📭 No files logged yet. Go to **Organise My Drive** first.")
         return
 
+    # ── AI bulk reclassify ────────────────────────────────────────────────────
+    with st.expander("🤖 AI Bulk Reclassify — give rules, apply to all files"):
+        st.markdown(
+            "Write rules in plain English and the AI will go through every file "
+            "and move anything that matches. One rule per line."
+        )
+        rules = st.text_area(
+            "Rules",
+            height=130,
+            placeholder=(
+                "Files with 'AIMUN' or 'MUN' in the name go to College Admin\n"
+                "Anything about Netflix or movies goes to Personal/Fun\n"
+                "Lecture notes and past papers go to Study"
+            ),
+            label_visibility="collapsed",
+        )
+        if st.button("🚀 Apply Rules", type="primary", disabled=not rules.strip()):
+            from claude_classifier import suggest_reclassification
+            changes: list[tuple[str, str, str]] = []  # (filename, old, new)
+            errors: list[str] = []
+            bar = st.progress(0, text="Asking AI…")
+
+            for i, entry in enumerate(logs):
+                fname = entry.get("Filename", "")
+                cur_cat = entry.get("Category", "Study")
+                bar.progress((i + 1) / len(logs), text=f"Checking {fname}…")
+                new_cat = suggest_reclassification(fname, cur_cat, rules.strip())
+                if new_cat:
+                    try:
+                        reclassify_file(fname, new_cat)
+                        update_row_category(fname, new_cat)
+                        changes.append((fname, cur_cat, new_cat))
+                    except Exception as exc:  # noqa: BLE001
+                        errors.append(f"{fname}: {exc}")
+
+            bar.empty()
+            if changes:
+                st.success(f"Moved **{len(changes)} file(s)**:")
+                for fname, old, new in changes:
+                    st.markdown(f"- **{fname}** `{old}` → `{new}`")
+            else:
+                st.info("No files matched the rules — nothing moved.")
+            for err in errors:
+                st.error(err)
+
     st.markdown(f"**{len(logs)} file(s) logged.** Select a new category and click Reclassify.")
     st.markdown("---")
 

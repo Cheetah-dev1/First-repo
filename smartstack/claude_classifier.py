@@ -149,6 +149,41 @@ def classify_document(
     )
 
 
+def suggest_reclassification(filename: str, current_category: str, rules: str) -> Optional[str]:
+    """
+    Ask the AI whether *filename* should move to a different category given
+    user-defined *rules*. Returns the new category string, or None if no
+    change is needed.
+    """
+    client = Groq(api_key=GROQ_API_KEY)
+    prompt = (
+        f"The user has defined these classification rules:\n{rules}\n\n"
+        f'A file named "{filename}" is currently in "{current_category}".\n'
+        "Based on the rules, should it move to a different category?\n"
+        "Valid categories: Study, College Admin, Personal/Fun, Miscellaneous\n\n"
+        "Return ONLY valid JSON:\n"
+        '{"reclassify": true or false, "new_category": "the correct category"}\n\n'
+        "Only set reclassify to true if a rule clearly applies AND the category differs."
+    )
+    try:
+        response = client.chat.completions.create(
+            model=GROQ_MODEL,
+            max_tokens=80,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = response.choices[0].message.content.strip()
+        start, end = raw.find("{"), raw.rfind("}") + 1
+        if start != -1 and end > start:
+            data = json.loads(raw[start:end])
+            if data.get("reclassify"):
+                new_cat = data.get("new_category", "")
+                if new_cat in _VALID_CATEGORIES and new_cat != current_category:
+                    return new_cat
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("suggest_reclassification failed for '%s': %s", filename, exc)
+    return None
+
+
 def _parse_and_validate(raw: str, filename: str) -> dict:
     """
     Parse *raw* as JSON and validate it matches the expected schema.
