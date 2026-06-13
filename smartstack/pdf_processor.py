@@ -10,11 +10,15 @@ import logging
 import os
 import base64
 
+import litellm
+litellm.set_verbose = False
+
 import pdfplumber
 import pandas as pd
 from PIL import Image
 
-from config import MAX_WORDS, GROQ_API_KEY
+from config import MAX_WORDS
+from settings_manager import load_settings, get_vision_model_kwargs, track_tokens, save_settings
 
 logger = logging.getLogger(__name__)
 
@@ -67,16 +71,17 @@ def extract_text_from_bytes(file_bytes: bytes, filename: str = "unknown") -> str
 
 
 def _extract_pdf(file_bytes: bytes, filename: str) -> str:
-    """Extract text from a PDF, falling back to vision OCR for scanned pages."""
+    settings = load_settings()
+    max_pages = settings["processing"]["max_pages"]
     with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+        pages = pdf.pages[:max_pages]
         pages_text: list[str] = []
-        for page_num, page in enumerate(pdf.pages, start=1):
+        for page_num, page in enumerate(pages, start=1):
             try:
                 pages_text.append(page.extract_text() or "")
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("Page %d of '%s' failed: %s", page_num, filename, exc)
                 pages_text.append("")
-
     full_text = "\n".join(pages_text).strip()
     if not full_text:
         logger.info("'%s' yielded no text — attempting vision OCR.", filename)
@@ -85,31 +90,27 @@ def _extract_pdf(file_bytes: bytes, filename: str) -> str:
 
 
 def _extract_scanned_pdf(file_bytes: bytes, filename: str) -> str:
-    """
-    Convert up to the first 3 pages of a scanned PDF to images and send them
-    to Groq vision for text extraction. Requires PyMuPDF (pip install PyMuPDF).
-    """
     try:
-        import fitz  # PyMuPDF
+        import fitz
     except ImportError:
-        logger.warning("PyMuPDF not installed — cannot OCR scanned PDF '%s'.", filename)
+        logger.warning("PyMuPDF not installed — cannot OCR '%s'.", filename)
         return _UNREADABLE
 
-    from groq import Groq
+    settings = load_settings()
+    model_kwargs = get_vision_model_kwargs(settings)
+    max_pages = min(settings["processing"]["max_pages"], len(fitz.open(stream=file_bytes, filetype="pdf")))
 
     doc = fitz.open(stream=file_bytes, filetype="pdf")
-    num_pages = min(len(doc), 3)
-    client = Groq(api_key=GROQ_API_KEY)
+    num_pages = min(len(doc), max_pages, 5)  # cap at 5 for API cost sanity
     parts: list[str] = []
 
     for i in range(num_pages):
         page = doc[i]
-        # Render at 150 DPI — good balance of quality vs. payload size
         pix = page.get_pixmap(matrix=fitz.Matrix(150 / 72, 150 / 72))
         img_b64 = base64.b64encode(pix.tobytes("png")).decode("utf-8")
         try:
-            resp = client.chat.completions.create(
-                model="llama-3.2-11b-vision-preview",
+            response = litellm.completion(
+                **model_kwargs,
                 max_tokens=1024,
                 messages=[{
                     "role": "user",
@@ -119,20 +120,22 @@ def _extract_scanned_pdf(file_bytes: bytes, filename: str) -> str:
                         {"type": "text",
                          "text": (
                              f"This is page {i + 1} of a scanned document called '{filename}'. "
-                             "Transcribe every piece of visible text exactly as it appears. "
-                             "If it's a form or table, describe all fields and their values."
+                             "Transcribe every piece of visible text exactly. "
+                             "If it's a form or table, describe all fields and values."
                          )},
                     ],
                 }],
             )
-            page_text = resp.choices[0].message.content.strip()
+            page_text = response.choices[0].message.content.strip()
+            if hasattr(response, "usage") and response.usage:
+                settings = track_tokens(settings, response.usage.total_tokens or 0)
+                save_settings(settings)
             if page_text:
                 parts.append(f"[Page {i + 1}]\n{page_text}")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Vision OCR failed for page %d of '%s': %s", i + 1, filename, exc)
+        except Exception as exc:
+            logger.warning("Vision OCR failed page %d of '%s': %s", i + 1, filename, exc)
 
     doc.close()
-
     if not parts:
         return _UNREADABLE
     return _truncate_to_words("\n\n".join(parts), MAX_WORDS)
@@ -208,17 +211,7 @@ def _extract_pptx(file_bytes: bytes, filename: str) -> str:
 
 
 def _extract_image(file_bytes: bytes, filename: str) -> str:
-    """
-    Describe and extract text from an image using Groq's vision model.
-
-    Converts BMP/TIFF to PNG first (Groq only accepts JPEG/PNG/WEBP/GIF).
-    No system-level OCR tools required.
-    """
-    from groq import Groq
-
     ext = os.path.splitext(filename)[1].lower()
-
-    # Groq vision supports jpeg, png, webp, gif — convert anything else to PNG
     if ext in (".bmp", ".tiff", ".tif"):
         img = Image.open(io.BytesIO(file_bytes))
         buf = io.BytesIO()
@@ -235,32 +228,30 @@ def _extract_image(file_bytes: bytes, filename: str) -> str:
         media_type = "image/png"
 
     image_b64 = base64.b64encode(file_bytes).decode("utf-8")
+    settings = load_settings()
+    model_kwargs = get_vision_model_kwargs(settings)
 
-    client = Groq(api_key=GROQ_API_KEY)
-    response = client.chat.completions.create(
-        model="llama-3.2-11b-vision-preview",
+    response = litellm.completion(
+        **model_kwargs,
         max_tokens=1024,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:{media_type};base64,{image_b64}"},
-                    },
-                    {
-                        "type": "text",
-                        "text": (
-                            "Describe this image in detail. "
-                            "If it contains text, transcribe it fully. "
-                            "If it is a document or form, describe its contents."
-                        ),
-                    },
-                ],
-            }
-        ],
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "image_url",
+                 "image_url": {"url": f"data:{media_type};base64,{image_b64}"}},
+                {"type": "text",
+                 "text": (
+                     "Describe this image in detail. "
+                     "If it contains text, transcribe it fully. "
+                     "If it is a document or form, describe its contents."
+                 )},
+            ],
+        }],
     )
     text = response.choices[0].message.content.strip()
+    if hasattr(response, "usage") and response.usage:
+        settings = track_tokens(settings, response.usage.total_tokens or 0)
+        save_settings(settings)
     logger.info("Vision model described '%s' (%d chars).", filename, len(text))
     return _truncate_to_words(text, MAX_WORDS) if text else _NO_TEXT
 

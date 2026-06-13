@@ -1,9 +1,5 @@
 """
-claude_classifier.py — Groq-powered PDF classification for SmartStack.
-
-Sends extracted PDF text to the Groq API and parses a structured JSON
-response containing the document category, topic, and a short summary.
-Includes retry logic for transient API failures.
+claude_classifier.py — LiteLLM-powered document classification for SmartStack.
 """
 
 import json
@@ -12,14 +8,15 @@ import os
 import time
 from typing import Optional
 
-from groq import Groq, APIError, APIConnectionError, RateLimitError
+import litellm
+litellm.set_verbose = False  # suppress LiteLLM's own logging
 
-from config import (
-    GROQ_API_KEY,
-    GROQ_MODEL,
-    MAX_TOKENS,
-    RETRY_COUNT,
-    DIRECTIVES_PATH,
+from config import MAX_TOKENS, RETRY_COUNT
+from settings_manager import (
+    load_settings,
+    get_text_model_kwargs,
+    track_tokens,
+    save_settings,
 )
 
 logger = logging.getLogger(__name__)
@@ -28,7 +25,7 @@ _EXPECTED_KEYS = {"category", "topic", "summary"}
 _VALID_CATEGORIES = {"Study", "College Admin", "Personal/Fun", "Miscellaneous"}
 
 _BASE_SYSTEM_PROMPT = """\
-You are a document classifier. The user will provide extracted text from a PDF.
+You are a document classifier. The user will provide extracted text from a file.
 Your task is to classify the document and return ONLY valid JSON — no prose,
 no markdown fences, no explanation — in exactly this shape:
 
@@ -40,7 +37,7 @@ no markdown fences, no explanation — in exactly this shape:
 
 Rules:
 - "category" MUST be exactly one of: Study, College Admin, Personal/Fun, Miscellaneous
-- Use Miscellaneous for signatures, photos, ID scans, forms with no clear academic or admin purpose, or anything that doesn't fit the other categories
+- Use Miscellaneous for signatures, photos, ID scans, forms with no clear academic or admin purpose
 - "topic" must be a single line, 15 words or fewer
 - "summary" must be exactly three lines separated by \\n
 - Return ONLY the JSON object, nothing else
@@ -48,97 +45,53 @@ Rules:
 
 
 def _build_system_prompt() -> str:
-    """Return the system prompt with any user-defined directives appended."""
     try:
-        if os.path.exists(DIRECTIVES_PATH):
-            directives = open(DIRECTIVES_PATH).read().strip()
-            if directives:
-                return (
-                    _BASE_SYSTEM_PROMPT
-                    + "\nAdditional rules set by the user — follow these closely:\n"
-                    + directives
-                    + "\n"
-                )
-    except Exception:  # noqa: BLE001
+        directives = load_settings().get("directives", "").strip()
+        if directives:
+            return (
+                _BASE_SYSTEM_PROMPT
+                + "\nAdditional rules set by the user — follow these closely:\n"
+                + directives + "\n"
+            )
+    except Exception:
         pass
     return _BASE_SYSTEM_PROMPT
 
 
-def classify_document(
-    text: str,
-    filename: str = "unknown.pdf",
-) -> dict:
-    """
-    Classify a document using Groq and return structured metadata.
-
-    Sends *text* to the configured Groq model and parses the JSON response.
-    Retries up to ``RETRY_COUNT`` times on transient failures using
-    exponential back-off (2 s, 4 s, 8 s …).
-
-    Args:
-        text:     Extracted text from the PDF (pre-truncated to token budget).
-        filename: Original filename — used only for logging.
-
-    Returns:
-        Dict with keys ``category``, ``topic``, and ``summary``.
-
-    Raises:
-        RuntimeError: When all retry attempts are exhausted.
-    """
-    client = Groq(api_key=GROQ_API_KEY)
-
+def classify_document(text: str, filename: str = "unknown") -> dict:
+    settings = load_settings()
+    model_kwargs = get_text_model_kwargs(settings)
     user_message = (
-        f"Please classify the following document extracted from '{filename}':\n\n"
-        f"{text}"
+        f"Please classify the following document extracted from '{filename}':\n\n{text}"
     )
-
+    system_prompt = _build_system_prompt()
     last_error: Optional[Exception] = None
 
     for attempt in range(1, RETRY_COUNT + 1):
-        logger.info(
-            "Classifying '%s' — attempt %d/%d.", filename, attempt, RETRY_COUNT
-        )
+        logger.info("Classifying '%s' — attempt %d/%d.", filename, attempt, RETRY_COUNT)
         try:
-            response = client.chat.completions.create(
-                model=GROQ_MODEL,
+            response = litellm.completion(
+                **model_kwargs,
                 max_tokens=MAX_TOKENS,
                 messages=[
-                    {"role": "system", "content": _build_system_prompt()},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},
                 ],
             )
-            raw_content = response.choices[0].message.content.strip()
-            logger.debug("Raw Groq response for '%s': %s", filename, raw_content)
-
-            parsed = _parse_and_validate(raw_content, filename)
+            raw = response.choices[0].message.content.strip()
+            if hasattr(response, "usage") and response.usage:
+                settings = track_tokens(settings, response.usage.total_tokens or 0)
+                save_settings(settings)
+            parsed = _parse_and_validate(raw, filename)
             logger.info("Classified '%s' as '%s'.", filename, parsed["category"])
             return parsed
 
-        except RateLimitError as exc:
+        except Exception as exc:
             last_error = exc
             wait = 2 ** attempt
             logger.warning(
-                "Rate limit on attempt %d for '%s' — retrying in %ds.", attempt, filename, wait
-            )
-            if attempt < RETRY_COUNT:
-                time.sleep(wait)
-
-        except (APIError, APIConnectionError) as exc:
-            last_error = exc
-            wait = 2 ** attempt
-            logger.warning(
-                "API error on attempt %d for '%s': %s — retrying in %ds.",
+                "Attempt %d for '%s' failed: %s — retrying in %ds.",
                 attempt, filename, exc, wait,
-            )
-            if attempt < RETRY_COUNT:
-                time.sleep(wait)
-
-        except ValueError as val_exc:
-            last_error = val_exc
-            wait = 2 ** attempt
-            logger.warning(
-                "JSON validation failed on attempt %d for '%s': %s — retrying in %ds.",
-                attempt, filename, val_exc, wait,
             )
             if attempt < RETRY_COUNT:
                 time.sleep(wait)
@@ -150,12 +103,8 @@ def classify_document(
 
 
 def suggest_reclassification(filename: str, current_category: str, rules: str) -> Optional[str]:
-    """
-    Ask the AI whether *filename* should move to a different category given
-    user-defined *rules*. Returns the new category string, or None if no
-    change is needed.
-    """
-    client = Groq(api_key=GROQ_API_KEY)
+    settings = load_settings()
+    model_kwargs = get_text_model_kwargs(settings)
     prompt = (
         f"The user has defined these classification rules:\n{rules}\n\n"
         f'A file named "{filename}" is currently in "{current_category}".\n'
@@ -166,12 +115,15 @@ def suggest_reclassification(filename: str, current_category: str, rules: str) -
         "Only set reclassify to true if a rule clearly applies AND the category differs."
     )
     try:
-        response = client.chat.completions.create(
-            model=GROQ_MODEL,
+        response = litellm.completion(
+            **model_kwargs,
             max_tokens=80,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = response.choices[0].message.content.strip()
+        if hasattr(response, "usage") and response.usage:
+            settings = track_tokens(settings, response.usage.total_tokens or 0)
+            save_settings(settings)
         start, end = raw.find("{"), raw.rfind("}") + 1
         if start != -1 and end > start:
             data = json.loads(raw[start:end])
@@ -179,60 +131,34 @@ def suggest_reclassification(filename: str, current_category: str, rules: str) -
                 new_cat = data.get("new_category", "")
                 if new_cat in _VALID_CATEGORIES and new_cat != current_category:
                     return new_cat
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.debug("suggest_reclassification failed for '%s': %s", filename, exc)
     return None
 
 
 def _parse_and_validate(raw: str, filename: str) -> dict:
-    """
-    Parse *raw* as JSON and validate it matches the expected schema.
-
-    Args:
-        raw:      Raw string returned by Groq.
-        filename: Used in error messages for context.
-
-    Returns:
-        Validated dict with keys ``category``, ``topic``, ``summary``.
-
-    Raises:
-        ValueError: If JSON is malformed or the schema is incorrect.
-    """
     cleaned = raw.strip()
-
-    # Strip markdown code fences if present
     if cleaned.startswith("```"):
         lines = cleaned.splitlines()
-        inner = [l for l in lines if not l.strip().startswith("```")]
-        cleaned = "\n".join(inner).strip()
-
-    # Extract just the JSON object — find the first { and last }
+        cleaned = "\n".join(l for l in lines if not l.strip().startswith("```")).strip()
     start = cleaned.find("{")
     end = cleaned.rfind("}") + 1
     if start != -1 and end > start:
         cleaned = cleaned[start:end]
-
     try:
         data: dict = json.loads(cleaned)
     except json.JSONDecodeError as exc:
-        raise ValueError(
-            f"Groq returned invalid JSON for '{filename}': {exc}\nRaw: {cleaned!r}"
-        ) from exc
+        raise ValueError(f"Invalid JSON for '{filename}': {exc}\nRaw: {cleaned!r}") from exc
 
     missing = _EXPECTED_KEYS - data.keys()
     if missing:
-        raise ValueError(
-            f"Groq response missing keys {missing} for '{filename}'. "
-            f"Got: {list(data.keys())}"
-        )
+        raise ValueError(f"Response missing keys {missing} for '{filename}'.")
 
     category = data.get("category", "")
     if category not in _VALID_CATEGORIES:
         fixed = _normalise_category(category)
         if fixed:
-            logger.warning(
-                "Normalised category '%s' → '%s' for '%s'.", category, fixed, filename
-            )
+            logger.warning("Normalised '%s' → '%s' for '%s'.", category, fixed, filename)
             data["category"] = fixed
         else:
             raise ValueError(
@@ -248,30 +174,13 @@ def _parse_and_validate(raw: str, filename: str) -> dict:
 
 
 def _normalise_category(raw_category: str) -> Optional[str]:
-    """
-    Attempt to map a non-standard category string to one of the valid values.
-
-    Args:
-        raw_category: Category string returned by Groq.
-
-    Returns:
-        A valid category string, or ``None`` if no mapping is found.
-    """
     mapping = {
-        "study": "Study",
-        "studies": "Study",
-        "academic": "Study",
-        "college admin": "College Admin",
-        "college administration": "College Admin",
-        "admin": "College Admin",
-        "administration": "College Admin",
-        "personal": "Personal/Fun",
-        "fun": "Personal/Fun",
-        "personal/fun": "Personal/Fun",
-        "personal fun": "Personal/Fun",
+        "study": "Study", "studies": "Study", "academic": "Study",
+        "college admin": "College Admin", "college administration": "College Admin",
+        "admin": "College Admin", "administration": "College Admin",
+        "personal": "Personal/Fun", "fun": "Personal/Fun",
+        "personal/fun": "Personal/Fun", "personal fun": "Personal/Fun",
         "leisure": "Personal/Fun",
-        "miscellaneous": "Miscellaneous",
-        "misc": "Miscellaneous",
-        "other": "Miscellaneous",
+        "miscellaneous": "Miscellaneous", "misc": "Miscellaneous", "other": "Miscellaneous",
     }
     return mapping.get(raw_category.lower().strip())

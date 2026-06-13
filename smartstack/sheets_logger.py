@@ -95,8 +95,14 @@ def _get_or_create_spreadsheet(service: Resource) -> str:
     from drive_manager import get_drive_service
     drive_svc = get_drive_service()
 
+    try:
+        from settings_manager import load_settings
+        sheet_name = load_settings()["sheets"]["sheet_name"]
+    except Exception:
+        sheet_name = SHEET_NAME
+
     query = (
-        f"name = '{SHEET_NAME}' "
+        f"name = '{sheet_name}' "
         f"and mimeType = 'application/vnd.google-apps.spreadsheet' "
         f"and trashed = false"
     )
@@ -109,12 +115,12 @@ def _get_or_create_spreadsheet(service: Resource) -> str:
 
     if files:
         spreadsheet_id: str = files[0]["id"]
-        logger.info("Found existing spreadsheet '%s' (id=%s).", SHEET_NAME, spreadsheet_id)
+        logger.info("Found existing spreadsheet '%s' (id=%s).", sheet_name, spreadsheet_id)
         _cached_spreadsheet_id[key] = spreadsheet_id
         return spreadsheet_id
 
     spreadsheet_body = {
-        "properties": {"title": SHEET_NAME},
+        "properties": {"title": sheet_name},
         "sheets": [
             {
                 "properties": {"title": "Log"},
@@ -141,7 +147,7 @@ def _get_or_create_spreadsheet(service: Resource) -> str:
         .execute()
     )
     spreadsheet_id = created["spreadsheetId"]
-    logger.info("Created new spreadsheet '%s' (id=%s).", SHEET_NAME, spreadsheet_id)
+    logger.info("Created new spreadsheet '%s' (id=%s).", sheet_name, spreadsheet_id)
     _cached_spreadsheet_id[key] = spreadsheet_id
     return spreadsheet_id
 

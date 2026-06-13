@@ -369,10 +369,10 @@ def _run_organise_flow() -> None:
 
         results.append(row)
 
-        # Pause between files to stay within Groq's free-tier rate limits
+        # Pause between files to stay within rate limits
         if idx < len(pdfs) - 1:
-            from config import PROCESSING_DELAY
-            time.sleep(PROCESSING_DELAY)
+            from settings_manager import load_settings
+            time.sleep(load_settings()["processing"]["delay_seconds"])
 
     progress_bar.progress(1.0, text="All files processed!")
     status_area.empty()
@@ -607,50 +607,185 @@ def page_reclassify() -> None:
 
 
 # ===========================================================================
-# PAGE 4 — Settings / Directives
+# PAGE 4 — Settings
 # ===========================================================================
 def page_settings() -> None:
-    """Render the Settings page for custom classification directives."""
-    from config import DIRECTIVES_PATH
-
-    st.title("⚙️ Classification Directives")
-    st.markdown(
-        "Write custom rules that guide the AI when classifying your files. "
-        "Plain English, one rule per line. Changes take effect on the next scan."
+    """Render the full Settings page."""
+    from datetime import date as _date
+    from settings_manager import (
+        load_settings, save_settings, apply_theme,
+        GROQ_FREE_TIER_DAILY_LIMIT,
     )
 
-    current = ""
-    if os.path.exists(DIRECTIVES_PATH):
-        with open(DIRECTIVES_PATH) as f:
-            current = f.read()
+    st.title("⚙️ Settings")
+    settings = load_settings()
 
-    directives = st.text_area(
-        "Your directives",
-        value=current,
-        height=280,
-        placeholder=(
-            "Examples:\n"
-            "Files with 'AIMUN' or 'MUN' in the name go to College Admin\n"
-            "Anything about Netflix, YouTube, or entertainment goes to Personal/Fun\n"
-            "Lecture notes, chapter summaries, and past papers go to Study\n"
-            "Receipts, invoices, and bank statements go to Miscellaneous"
-        ),
-    )
+    # ── Text Model ────────────────────────────────────────────────────────────
+    st.subheader("🤖 Text Model")
+    st.caption("Used for classification, Q&A, and bulk reclassify.")
 
-    col1, col2 = st.columns([1, 4])
+    # initialise variables so they're always in scope
+    tm = settings["text_model"]
+    use_custom_text = st.toggle("Use custom text model", value=tm.get("use_custom", False), key="tog_tm")
+    custom_text_model = tm.get("model", "")
+    custom_text_key   = tm.get("api_key", "")
+    custom_text_base  = tm.get("base_url", "")
+    if use_custom_text:
+        custom_text_model = st.text_input("Model name (LiteLLM format, e.g. openai/gpt-4o)",
+                                          value=custom_text_model, key="tm_model")
+        custom_text_key   = st.text_input("API Key", value=custom_text_key,
+                                          type="password", key="tm_key")
+        custom_text_base  = st.text_input("Base URL (optional, for self-hosted)",
+                                          value=custom_text_base, key="tm_base")
+        if custom_text_model and custom_text_key:
+            st.success("✅ Custom text model ready")
+        else:
+            st.warning("⚠️ Enter a model name and API key to use a custom model")
+    else:
+        st.info("`groq/llama-3.3-70b-versatile` — no extra key needed")
+
+    st.divider()
+
+    # ── Vision Model ──────────────────────────────────────────────────────────
+    st.subheader("👁️ Vision Model")
+    st.caption("Used for images and scanned PDFs.")
+
+    vm = settings["vision_model"]
+    use_custom_vision = st.toggle("Use custom vision model", value=vm.get("use_custom", False), key="tog_vm")
+    custom_vision_model = vm.get("model", "")
+    custom_vision_key   = vm.get("api_key", "")
+    custom_vision_base  = vm.get("base_url", "")
+    if use_custom_vision:
+        custom_vision_model = st.text_input("Model name (e.g. openai/gpt-4o, anthropic/claude-opus-4-8)",
+                                             value=custom_vision_model, key="vm_model")
+        custom_vision_key   = st.text_input("API Key", value=custom_vision_key,
+                                             type="password", key="vm_key")
+        custom_vision_base  = st.text_input("Base URL (optional)",
+                                             value=custom_vision_base, key="vm_base")
+        if custom_vision_model and custom_vision_key:
+            st.success("✅ Custom vision model ready")
+        else:
+            st.warning("⚠️ Enter a model name and API key to use a custom vision model")
+    else:
+        st.info("`groq/llama-3.2-11b-vision-preview` — no extra key needed")
+
+    st.divider()
+
+    # ── Folder Names ──────────────────────────────────────────────────────────
+    st.subheader("📁 Drive Folder Names")
+    st.caption("Names of the folders SmartStack creates in your Google Drive.")
+    fl = settings["folders"]
+    col1, col2 = st.columns(2)
     with col1:
-        if st.button("💾 Save", type="primary", use_container_width=True):
-            with open(DIRECTIVES_PATH, "w") as f:
-                f.write(directives)
-            st.success("Directives saved! They'll apply on the next scan.")
+        folder_study = st.text_input("Study", value=fl.get("Study", "Study"))
+        folder_fun   = st.text_input("Personal/Fun", value=fl.get("Personal/Fun", "Personal/Fun"))
     with col2:
-        if directives.strip() and st.button("🗑️ Clear all", use_container_width=True):
-            open(DIRECTIVES_PATH, "w").close()
-            st.rerun()
+        folder_admin = st.text_input("College Admin", value=fl.get("College Admin", "College Admin"))
+        folder_misc  = st.text_input("Miscellaneous", value=fl.get("Miscellaneous", "Miscellaneous"))
 
-    if current.strip():
-        st.markdown("---")
-        st.caption(f"Directives file: `{DIRECTIVES_PATH}`")
+    st.divider()
+
+    # ── Processing ────────────────────────────────────────────────────────────
+    st.subheader("⚙️ Processing")
+    pr = settings["processing"]
+    max_pages = st.slider("Max pages to read per PDF", 1, 50,
+                          value=int(pr.get("max_pages", 10)))
+    delay_secs = st.slider("Delay between AI calls (seconds)", 0, 10,
+                            value=int(pr.get("delay_seconds", 2)))
+
+    st.divider()
+
+    # ── Google Sheets ─────────────────────────────────────────────────────────
+    st.subheader("📊 Google Sheets")
+    sheet_name = st.text_input("Log sheet name",
+                                value=settings["sheets"].get("sheet_name", "SmartStack Log"))
+
+    st.divider()
+
+    # ── Classification Directives ─────────────────────────────────────────────
+    st.subheader("📋 Classification Directives")
+    st.caption("Plain-English rules the AI follows when classifying files. One rule per line.")
+    directives = st.text_area(
+        "Directives",
+        value=settings.get("directives", ""),
+        height=130,
+        placeholder=(
+            "Files with 'AIMUN' or 'MUN' in the name go to College Admin\n"
+            "Anything about Netflix or entertainment goes to Personal/Fun\n"
+            "Lecture notes and past papers go to Study"
+        ),
+        label_visibility="collapsed",
+    )
+
+    st.divider()
+
+    # ── Token Usage ───────────────────────────────────────────────────────────
+    st.subheader("📈 Token Usage (Today)")
+    token_data = settings.get("token_usage", {})
+    today_str  = str(_date.today())
+    daily_total = token_data.get("total", 0) if token_data.get("date") == today_str else 0
+    pct = daily_total / GROQ_FREE_TIER_DAILY_LIMIT
+
+    st.markdown(f"**{daily_total:,}** / {GROQ_FREE_TIER_DAILY_LIMIT:,} tokens used today")
+    st.progress(min(pct, 1.0))
+    if pct >= 1.0:
+        st.error("🚫 Daily limit reached. Wait ~10 minutes or switch to a custom model.")
+    elif pct >= 0.8:
+        st.warning("⚠️ Approaching limit — consider slowing down or using fewer files.")
+
+    if st.button("🔄 Reset Counter"):
+        settings["token_usage"] = {"date": today_str, "total": 0}
+        save_settings(settings)
+        st.success("Counter reset!")
+        st.rerun()
+
+    st.divider()
+
+    # ── Theme ─────────────────────────────────────────────────────────────────
+    st.subheader("🎨 Theme")
+    theme_idx = 1 if settings.get("theme") == "dark" else 0
+    theme = st.radio("", ["Light", "Dark"], index=theme_idx, horizontal=True,
+                     label_visibility="collapsed")
+    theme_val = theme.lower()
+
+    st.divider()
+
+    # ── Save ──────────────────────────────────────────────────────────────────
+    if st.button("💾 Save Settings", type="primary", use_container_width=True):
+        new_settings = load_settings()  # fresh load to preserve token_usage etc.
+        new_settings["text_model"] = {
+            "use_custom": use_custom_text,
+            "model":      custom_text_model,
+            "api_key":    custom_text_key,
+            "base_url":   custom_text_base,
+        }
+        new_settings["vision_model"] = {
+            "use_custom": use_custom_vision,
+            "model":      custom_vision_model,
+            "api_key":    custom_vision_key,
+            "base_url":   custom_vision_base,
+        }
+        new_settings["folders"] = {
+            "Study":         folder_study  or "Study",
+            "College Admin": folder_admin  or "College Admin",
+            "Personal/Fun":  folder_fun    or "Personal/Fun",
+            "Miscellaneous": folder_misc   or "Miscellaneous",
+        }
+        new_settings["processing"] = {
+            "max_pages":      max_pages,
+            "delay_seconds":  delay_secs,
+        }
+        new_settings["sheets"]     = {"sheet_name": sheet_name or "SmartStack Log"}
+        new_settings["directives"] = directives
+        new_settings["theme"]      = theme_val
+        save_settings(new_settings)
+
+        theme_changed = theme_val != settings.get("theme", "light")
+        if theme_changed:
+            apply_theme(theme_val)
+            st.success("✅ Settings saved! Restart the app to apply the theme change.")
+        else:
+            st.success("✅ Settings saved!")
 
 
 # ===========================================================================

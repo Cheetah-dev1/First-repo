@@ -85,16 +85,20 @@ MAX_WORDS: int = int(os.getenv("MAX_WORDS", "1500"))
 
 
 def validate_config() -> None:
-    """Raise ValueError if mandatory environment variables are missing."""
-    if not GROQ_API_KEY:
-        raise ValueError(
-            "GROQ_API_KEY is not set. "
-            "Get a free key at https://console.groq.com"
-        )
+    """Raise ValueError if mandatory config is missing."""
+    try:
+        from settings_manager import load_settings, validate_model_config
+        error = validate_model_config(load_settings())
+        if error:
+            raise ValueError(error)
+    except ImportError:
+        if not GROQ_API_KEY:
+            raise ValueError(
+                "GROQ_API_KEY is not set. Get a free key at https://console.groq.com"
+            )
     if not os.path.isfile(OAUTH_CLIENT_SECRET_PATH):
         raise ValueError(
             f"OAuth client secret not found at: {OAUTH_CLIENT_SECRET_PATH}\n"
-            "Download it from Google Cloud Console and place it in the "
-            "'credentials/' directory."
+            "Download it from Google Cloud Console and place it in the 'credentials/' directory."
         )
     logger.info("Configuration validated successfully.")

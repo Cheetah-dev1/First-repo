@@ -349,11 +349,16 @@ scan_root_for_pdfs = scan_root_for_files
 
 def move_pdf_to_category(file_id: str, category: str) -> None:
     """Move a Drive file into the subfolder matching *category*."""
-    folder_name = CATEGORY_FOLDERS.get(category)
+    try:
+        from settings_manager import load_settings, get_category_folders
+        category_folders = get_category_folders(load_settings())
+    except Exception:
+        category_folders = CATEGORY_FOLDERS
+    folder_name = category_folders.get(category)
     if folder_name is None:
         raise ValueError(
             f"Unknown category '{category}'. "
-            f"Expected one of: {list(CATEGORY_FOLDERS.keys())}"
+            f"Expected one of: {list(category_folders.keys())}"
         )
     service = _get_drive_service()
     root_id = _get_root_folder_id(service)

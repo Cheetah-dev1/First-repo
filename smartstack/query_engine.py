@@ -2,21 +2,18 @@
 query_engine.py — Natural-language Q&A against logged document summaries.
 
 Fetches all rows from the SmartStack Log spreadsheet, constructs a context
-block, and asks Groq to answer the user's question based solely on that context.
+block, and asks the AI to answer the user's question based solely on that context.
 """
 
 import logging
 import time
 from typing import Optional
 
-from groq import Groq, APIError, APIConnectionError, RateLimitError
+import litellm
+litellm.set_verbose = False
 
-from config import (
-    GROQ_API_KEY,
-    GROQ_MODEL,
-    MAX_TOKENS,
-    RETRY_COUNT,
-)
+from config import MAX_TOKENS, RETRY_COUNT
+from settings_manager import load_settings, get_text_model_kwargs, track_tokens, save_settings
 from sheets_logger import fetch_all_logs
 
 logger = logging.getLogger(__name__)
@@ -43,8 +40,8 @@ def answer_question(question: str) -> str:
     The function:
     1. Fetches all logged summaries from the sheet.
     2. Constructs a context block from those summaries.
-    3. Sends the context + question to Groq.
-    4. Returns Groq's answer as a plain string.
+    3. Sends the context + question to the configured AI model.
+    4. Returns the answer as a plain string.
 
     Retries up to ``RETRY_COUNT`` times on transient API failures.
 
@@ -52,7 +49,7 @@ def answer_question(question: str) -> str:
         question: The user's natural-language question.
 
     Returns:
-        Groq's answer string, or a friendly "no data" message if the
+        The answer string, or a friendly "no data" message if the
         sheet is empty.
 
     Raises:
@@ -66,7 +63,7 @@ def answer_question(question: str) -> str:
 
     context = _build_context(logs)
     logger.info(
-        "Sending question to Groq with context from %d document(s).", len(logs)
+        "Sending question to AI with context from %d document(s).", len(logs)
     )
 
     user_message = (
@@ -76,13 +73,14 @@ def answer_question(question: str) -> str:
         f"My question: {question}"
     )
 
-    client = Groq(api_key=GROQ_API_KEY)
+    settings = load_settings()
+    model_kwargs = get_text_model_kwargs(settings)
     last_error: Optional[Exception] = None
 
     for attempt in range(1, RETRY_COUNT + 1):
         try:
-            response = client.chat.completions.create(
-                model=GROQ_MODEL,
+            response = litellm.completion(
+                **model_kwargs,
                 max_tokens=MAX_TOKENS,
                 messages=[
                     {"role": "system", "content": _SYSTEM_PROMPT},
@@ -90,24 +88,16 @@ def answer_question(question: str) -> str:
                 ],
             )
             answer: str = response.choices[0].message.content.strip()
+            if hasattr(response, "usage") and response.usage:
+                settings = track_tokens(settings, response.usage.total_tokens or 0)
+                save_settings(settings)
             logger.info("Received answer (%d chars).", len(answer))
             return answer
 
-        except RateLimitError as exc:
+        except Exception as exc:
             last_error = exc
             wait = 2 ** attempt
-            logger.warning(
-                "Rate limit on attempt %d — retrying in %ds.", attempt, wait
-            )
-            if attempt < RETRY_COUNT:
-                time.sleep(wait)
-
-        except (APIError, APIConnectionError) as exc:
-            last_error = exc
-            wait = 2 ** attempt
-            logger.warning(
-                "API error on attempt %d: %s — retrying in %ds.", attempt, exc, wait
-            )
+            logger.warning("Attempt %d failed: %s — retrying in %ds.", attempt, exc, wait)
             if attempt < RETRY_COUNT:
                 time.sleep(wait)
 
@@ -119,14 +109,14 @@ def answer_question(question: str) -> str:
 
 def _build_context(logs: list[dict]) -> str:
     """
-    Format a list of log dicts into a numbered context block for Groq.
+    Format a list of log dicts into a numbered context block for the AI.
 
     Args:
         logs: List of dicts from ``fetch_all_logs()``, each containing
               at minimum ``Filename``, ``Category``, ``Topic``, ``Summary``.
 
     Returns:
-        A formatted multi-line string ready for inclusion in a Groq prompt.
+        A formatted multi-line string ready for inclusion in a prompt.
     """
     sections: list[str] = []
     for i, entry in enumerate(logs, start=1):
