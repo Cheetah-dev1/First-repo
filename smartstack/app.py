@@ -41,7 +41,7 @@ st.set_page_config(
 # ---------------------------------------------------------------------------
 def _import_modules():
     """Import project modules lazily to avoid blocking the initial render."""
-    from drive_manager import scan_root_for_pdfs, download_pdf_content, move_pdf_to_category, reclassify_file
+    from drive_manager import scan_root_for_files as scan_root_for_pdfs, download_pdf_content, move_pdf_to_category, reclassify_file
     from pdf_processor import extract_text_from_bytes
     from claude_classifier import classify_document
     from sheets_logger import log_processed_file, fetch_all_logs, update_row_category
@@ -86,8 +86,9 @@ def page_organise() -> None:
     """Render the 'Organise My Drive' page."""
     st.title("🗂️ Organise My Drive")
     st.markdown(
-        "Click **Scan My Drive** to find loose PDFs in your Drive root, "
-        "classify them with Claude, and move them into the right folders."
+        "Click **Scan My Drive** to find loose files in your Drive root, "
+        "classify them with AI, and move them into the right folders. "
+        "Supports PDF, Word, Excel, PowerPoint, and images."
     )
 
     if st.button("🔍 Scan My Drive", type="primary"):
@@ -117,7 +118,7 @@ def _run_organise_flow() -> None:
         st.error(f"⚠️ Configuration error: {exc}")
         return
 
-    with st.spinner("Scanning your Google Drive root for loose PDFs…"):
+    with st.spinner("Scanning your Google Drive root for loose files…"):
         try:
             pdfs = scan_root_for_pdfs()
         except Exception as exc:  # noqa: BLE001
@@ -126,7 +127,7 @@ def _run_organise_flow() -> None:
             return
 
     if not pdfs:
-        st.info("✅ Nothing to organise! No loose PDFs found in your Drive root.")
+        st.info("✅ Nothing to organise! No loose files found in your Drive root.")
         return
 
     st.success(f"Found **{len(pdfs)} PDF(s)** to process.")

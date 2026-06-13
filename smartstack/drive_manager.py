@@ -3,10 +3,11 @@ drive_manager.py — Google Drive integration for SmartStack.
 
 Responsibilities:
 - Authenticate with Google Drive via OAuth2 (with token refresh).
-- Scan the root of the user's Drive for loose PDFs (files with no parent
-  other than the Drive root / 'My Drive').
-- Auto-create destination subfolders (Study, College Admin, Personal/Fun).
-- Move classified PDFs into the correct subfolder.
+- Scan the root of the user's Drive for loose files (PDF, Word, Excel,
+  PowerPoint, and images) with no parent other than the Drive root.
+- Auto-create destination subfolders (Study, College Admin, Personal/Fun,
+  Miscellaneous).
+- Move classified files into the correct subfolder.
 """
 
 import logging
@@ -29,8 +30,24 @@ from config import (
 logger = logging.getLogger(__name__)
 
 # MIME type constants
-_MIME_PDF = "application/pdf"
 _MIME_FOLDER = "application/vnd.google-apps.folder"
+
+# All file types SmartStack can process
+_SUPPORTED_MIME_TYPES: list[str] = [
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # docx
+    "application/msword",                                                         # doc
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",         # xlsx
+    "application/vnd.ms-excel",                                                   # xls
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation", # pptx
+    "application/vnd.ms-powerpoint",                                              # ppt
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/bmp",
+    "image/tiff",
+    "image/webp",
+]
 
 
 def _get_drive_service() -> Resource:
@@ -129,27 +146,29 @@ def _get_or_create_folder(service: Resource, name: str, parent_id: str) -> str:
     return folder_id
 
 
-def scan_root_for_pdfs() -> list[dict]:
+def scan_root_for_files() -> list[dict]:
     """
-    Return a list of PDF files sitting directly in the Drive root (i.e. not
-    already inside any subfolder).
+    Return a list of supported files sitting directly in the Drive root.
+
+    Supported types: PDF, DOCX, DOC, XLSX, XLS, PPTX, PPT, and common images.
+    Files already inside a subfolder are not returned.
 
     Each item in the returned list is a dict with keys:
         ``id``   — Drive file ID
-        ``name`` — filename (including .pdf extension)
+        ``name`` — filename including extension
 
     Returns:
-        List of dicts describing loose PDFs in the Drive root.
+        List of dicts describing loose supported files in the Drive root.
     """
     service = _get_drive_service()
     root_id = _get_root_folder_id(service)
 
-    query = (
-        f"mimeType = '{_MIME_PDF}' "
-        f"and '{root_id}' in parents "
-        f"and trashed = false"
+    mime_conditions = " or ".join(
+        f"mimeType = '{m}'" for m in _SUPPORTED_MIME_TYPES
     )
-    pdfs: list[dict] = []
+    query = f"({mime_conditions}) and '{root_id}' in parents and trashed = false"
+
+    files: list[dict] = []
     page_token: Optional[str] = None
 
     while True:
@@ -163,13 +182,17 @@ def scan_root_for_pdfs() -> list[dict]:
             )
             .execute()
         )
-        pdfs.extend(response.get("files", []))
+        files.extend(response.get("files", []))
         page_token = response.get("nextPageToken")
         if not page_token:
             break
 
-    logger.info("Found %d loose PDF(s) in Drive root.", len(pdfs))
-    return pdfs
+    logger.info("Found %d loose file(s) in Drive root.", len(files))
+    return files
+
+
+# Keep old name as alias so nothing breaks if called elsewhere
+scan_root_for_pdfs = scan_root_for_files
 
 
 def move_pdf_to_category(file_id: str, category: str) -> None:
