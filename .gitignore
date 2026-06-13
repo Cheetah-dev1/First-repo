@@ -1,0 +1,28 @@
+# Claude Code internals
+.claude/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Environment and secrets
+.env
+*.env
+
+# SmartStack credentials and settings
+smartstack/credentials/
+smartstack/settings.json
+smartstack/directives.txt
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS
+.DS_Store
+Thumbs.db
