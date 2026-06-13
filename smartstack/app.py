@@ -10,6 +10,7 @@ Run with:
 """
 
 import logging
+import os
 import sys
 import traceback
 
@@ -154,13 +155,21 @@ def _run_organise_flow() -> None:
         }
 
         try:
-            # 1. Download PDF bytes
-            pdf_bytes = download_pdf_content(file_id)
+            _VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".wmv", ".webm", ".flv"}
+            file_ext = os.path.splitext(filename)[1].lower()
+            is_video = file_ext in _VIDEO_EXTENSIONS
 
-            # 2. Extract text
-            text = extract_text_from_bytes(pdf_bytes, filename=filename)
+            # 1. Get content — videos are classified by filename only (no download)
+            if is_video:
+                text = (
+                    f"This is a video file named: {filename}. "
+                    f"Classify it based on the filename alone."
+                )
+            else:
+                pdf_bytes = download_pdf_content(file_id)
+                text = extract_text_from_bytes(pdf_bytes, filename=filename)
 
-            # 3. Classify with Claude
+            # 2. Classify with AI
             classification = classify_document(text, filename=filename)
             row["Category"] = classification["category"]
             row["Topic"] = classification["topic"]

@@ -47,6 +47,14 @@ _SUPPORTED_MIME_TYPES: list[str] = [
     "image/bmp",
     "image/tiff",
     "image/webp",
+    # Video — classified by filename only, never downloaded
+    "video/mp4",
+    "video/x-msvideo",     # avi
+    "video/quicktime",     # mov
+    "video/x-matroska",   # mkv
+    "video/x-ms-wmv",     # wmv
+    "video/webm",
+    "video/x-flv",
 ]
 
 
