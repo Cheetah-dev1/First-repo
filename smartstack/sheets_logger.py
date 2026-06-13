@@ -92,9 +92,8 @@ def _get_or_create_spreadsheet(service: Resource) -> str:
     if _cached_spreadsheet_id.get(key):
         return _cached_spreadsheet_id[key]
 
-    token_path = _active_sheets_token_path()
-    drive_creds = Credentials.from_authorized_user_file(token_path, SHEETS_SCOPES)
-    drive_svc = build("drive", "v3", credentials=drive_creds)
+    from drive_manager import get_drive_service
+    drive_svc = get_drive_service()
 
     query = (
         f"name = '{SHEET_NAME}' "

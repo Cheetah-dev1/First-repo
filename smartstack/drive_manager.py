@@ -221,6 +221,9 @@ def _get_drive_service() -> Resource:
     return build("drive", "v3", credentials=_get_drive_credentials())
 
 
+get_drive_service = _get_drive_service
+
+
 # ===========================================================================
 # User info
 # ===========================================================================
