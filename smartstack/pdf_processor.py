@@ -67,7 +67,7 @@ def extract_text_from_bytes(file_bytes: bytes, filename: str = "unknown") -> str
 
 
 def _extract_pdf(file_bytes: bytes, filename: str) -> str:
-    """Extract text from a PDF using pdfplumber."""
+    """Extract text from a PDF, falling back to vision OCR for scanned pages."""
     with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
         pages_text: list[str] = []
         for page_num, page in enumerate(pdf.pages, start=1):
@@ -79,9 +79,63 @@ def _extract_pdf(file_bytes: bytes, filename: str) -> str:
 
     full_text = "\n".join(pages_text).strip()
     if not full_text:
-        logger.warning("'%s' yielded no text (likely scanned).", filename)
-        return _UNREADABLE
+        logger.info("'%s' yielded no text — attempting vision OCR.", filename)
+        return _extract_scanned_pdf(file_bytes, filename)
     return _truncate_to_words(full_text, MAX_WORDS)
+
+
+def _extract_scanned_pdf(file_bytes: bytes, filename: str) -> str:
+    """
+    Convert up to the first 3 pages of a scanned PDF to images and send them
+    to Groq vision for text extraction. Requires PyMuPDF (pip install PyMuPDF).
+    """
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        logger.warning("PyMuPDF not installed — cannot OCR scanned PDF '%s'.", filename)
+        return _UNREADABLE
+
+    from groq import Groq
+
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
+    num_pages = min(len(doc), 3)
+    client = Groq(api_key=GROQ_API_KEY)
+    parts: list[str] = []
+
+    for i in range(num_pages):
+        page = doc[i]
+        # Render at 150 DPI — good balance of quality vs. payload size
+        pix = page.get_pixmap(matrix=fitz.Matrix(150 / 72, 150 / 72))
+        img_b64 = base64.b64encode(pix.tobytes("png")).decode("utf-8")
+        try:
+            resp = client.chat.completions.create(
+                model="llama-3.2-11b-vision-preview",
+                max_tokens=1024,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url",
+                         "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
+                        {"type": "text",
+                         "text": (
+                             f"This is page {i + 1} of a scanned document called '{filename}'. "
+                             "Transcribe every piece of visible text exactly as it appears. "
+                             "If it's a form or table, describe all fields and their values."
+                         )},
+                    ],
+                }],
+            )
+            page_text = resp.choices[0].message.content.strip()
+            if page_text:
+                parts.append(f"[Page {i + 1}]\n{page_text}")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Vision OCR failed for page %d of '%s': %s", i + 1, filename, exc)
+
+    doc.close()
+
+    if not parts:
+        return _UNREADABLE
+    return _truncate_to_words("\n\n".join(parts), MAX_WORDS)
 
 
 def _extract_docx(file_bytes: bytes, filename: str) -> str:
