@@ -3,9 +3,9 @@ sheets_logger.py — Google Sheets integration for SmartStack.
 
 Responsibilities:
 - Authenticate with Google Sheets via OAuth2 (with token refresh).
-- Open (or create) the SmartStack Log spreadsheet.
+- Open (or create) the SmartStack Log spreadsheet for the active account.
 - Append one row per processed file — never overwrite existing data.
-- Expose a function to read all logged rows for the query engine.
+- Expose functions to read and update logged rows.
 """
 
 import logging
@@ -29,27 +29,39 @@ from config import (
 
 logger = logging.getLogger(__name__)
 
-# Cache the spreadsheet ID in memory across calls within the same session
-_cached_spreadsheet_id: Optional[str] = None
+# Per-account spreadsheet ID cache — keyed by account email (or "default")
+_cached_spreadsheet_id: dict[str, str] = {}
+
+
+def _active_email() -> str:
+    """Return the active account email, or 'default' as a fallback key."""
+    try:
+        from drive_manager import get_active_account_email
+        return get_active_account_email() or "default"
+    except Exception:
+        return "default"
+
+
+def _active_sheets_token_path() -> str:
+    """Return the Sheets token path for the active account."""
+    try:
+        from drive_manager import get_active_sheets_token_path
+        return get_active_sheets_token_path()
+    except Exception:
+        return SHEETS_TOKEN_PATH
 
 
 def _get_sheets_service() -> Resource:
     """
-    Authenticate and return an authorised Google Sheets API service object.
-
-    Token is cached to disk and refreshed automatically when expired.
-    On first run the user is directed to a browser-based OAuth consent screen.
-
-    Returns:
-        An authorised ``googleapiclient.discovery.Resource`` for Sheets v4.
+    Authenticate and return an authorised Google Sheets API service object
+    for the currently active account.
     """
-    creds: Optional[Credentials] = None
+    token_path = _active_sheets_token_path()
 
-    if os.path.exists(SHEETS_TOKEN_PATH):
-        creds = Credentials.from_authorized_user_file(
-            SHEETS_TOKEN_PATH, SHEETS_SCOPES
-        )
-        logger.debug("Loaded Sheets credentials from token cache.")
+    creds: Optional[Credentials] = None
+    if os.path.exists(token_path):
+        creds = Credentials.from_authorized_user_file(token_path, SHEETS_SCOPES)
+        logger.debug("Loaded Sheets credentials from %s.", token_path)
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
@@ -62,42 +74,27 @@ def _get_sheets_service() -> Resource:
             )
             creds = flow.run_local_server(port=0)
 
-        os.makedirs(os.path.dirname(SHEETS_TOKEN_PATH), exist_ok=True)
-        with open(SHEETS_TOKEN_PATH, "w") as token_file:
+        os.makedirs(os.path.dirname(token_path), exist_ok=True)
+        with open(token_path, "w") as token_file:
             token_file.write(creds.to_json())
-        logger.info("Sheets credentials saved to %s", SHEETS_TOKEN_PATH)
+        logger.info("Sheets credentials saved to %s.", token_path)
 
-    service: Resource = build("sheets", "v4", credentials=creds)
-    return service
+    return build("sheets", "v4", credentials=creds)
 
 
 def _get_or_create_spreadsheet(service: Resource) -> str:
     """
-    Return the spreadsheet ID of the SmartStack Log, creating it if absent.
-
-    The function first searches Drive for an existing spreadsheet with the
-    configured ``SHEET_NAME``.  If found, its ID is returned.  Otherwise a
-    new spreadsheet is created with a header row.
-
-    Args:
-        service: Authorised Sheets API service.
-
-    Returns:
-        Spreadsheet ID string.
+    Return the spreadsheet ID for the active account's SmartStack Log,
+    creating it if it doesn't exist yet.
     """
     global _cached_spreadsheet_id
-    if _cached_spreadsheet_id:
-        return _cached_spreadsheet_id
+    key = _active_email()
+    if _cached_spreadsheet_id.get(key):
+        return _cached_spreadsheet_id[key]
 
-    # Use the Drive service to search for the spreadsheet by name
-    from googleapiclient.discovery import build as _build
-    from google.oauth2.credentials import Credentials as _Creds
-
-    # Re-use sheets credentials but via Drive API to search
-    drive_creds = Credentials.from_authorized_user_file(
-        SHEETS_TOKEN_PATH, SHEETS_SCOPES
-    )
-    drive_svc = _build("drive", "v3", credentials=drive_creds)
+    token_path = _active_sheets_token_path()
+    drive_creds = Credentials.from_authorized_user_file(token_path, SHEETS_SCOPES)
+    drive_svc = build("drive", "v3", credentials=drive_creds)
 
     query = (
         f"name = '{SHEET_NAME}' "
@@ -114,10 +111,9 @@ def _get_or_create_spreadsheet(service: Resource) -> str:
     if files:
         spreadsheet_id: str = files[0]["id"]
         logger.info("Found existing spreadsheet '%s' (id=%s).", SHEET_NAME, spreadsheet_id)
-        _cached_spreadsheet_id = spreadsheet_id
+        _cached_spreadsheet_id[key] = spreadsheet_id
         return spreadsheet_id
 
-    # Create a new spreadsheet
     spreadsheet_body = {
         "properties": {"title": SHEET_NAME},
         "sheets": [
@@ -146,10 +142,8 @@ def _get_or_create_spreadsheet(service: Resource) -> str:
         .execute()
     )
     spreadsheet_id = created["spreadsheetId"]
-    logger.info(
-        "Created new spreadsheet '%s' (id=%s).", SHEET_NAME, spreadsheet_id
-    )
-    _cached_spreadsheet_id = spreadsheet_id
+    logger.info("Created new spreadsheet '%s' (id=%s).", SHEET_NAME, spreadsheet_id)
+    _cached_spreadsheet_id[key] = spreadsheet_id
     return spreadsheet_id
 
 
@@ -159,26 +153,12 @@ def log_processed_file(
     topic: str,
     summary: str,
 ) -> None:
-    """
-    Append a single row to the SmartStack Log spreadsheet.
-
-    The row includes the filename, Claude's classification, topic, summary,
-    and a UTC timestamp.  Existing rows are never modified.
-
-    Args:
-        filename: Original PDF filename.
-        category: Claude-assigned category (Study / College Admin / Personal/Fun).
-        topic:    One-line topic returned by Claude.
-        summary:  Three-line summary returned by Claude.
-    """
+    """Append a single row to the active account's SmartStack Log spreadsheet."""
     service = _get_sheets_service()
     spreadsheet_id = _get_or_create_spreadsheet(service)
 
     date_processed = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
     row_values = [filename, category, topic, summary, date_processed]
-
-    body = {"values": [row_values]}
 
     try:
         service.spreadsheets().values().append(
@@ -186,7 +166,7 @@ def log_processed_file(
             range="Log!A:E",
             valueInputOption="RAW",
             insertDataOption="INSERT_ROWS",
-            body=body,
+            body={"values": [row_values]},
         ).execute()
         logger.info("Logged '%s' to sheet.", filename)
     except HttpError as exc:
@@ -196,14 +176,8 @@ def log_processed_file(
 
 def fetch_all_logs() -> list[dict]:
     """
-    Return all logged rows from the SmartStack Log spreadsheet as a list of
-    dicts keyed by column name.
-
-    The header row is used as keys; it is not included in the returned list.
-    Returns an empty list if the sheet exists but has no data rows.
-
-    Returns:
-        List of dicts, each representing one processed file.
+    Return all logged rows from the active account's SmartStack Log as a
+    list of dicts keyed by column name.
     """
     service = _get_sheets_service()
     spreadsheet_id = _get_or_create_spreadsheet(service)
@@ -229,7 +203,6 @@ def fetch_all_logs() -> list[dict]:
 
     logs: list[dict] = []
     for row in data_rows:
-        # Pad short rows in case trailing empty cells were omitted by the API
         padded = row + [""] * (len(header) - len(row))
         logs.append(dict(zip(header, padded)))
 
@@ -240,19 +213,7 @@ def fetch_all_logs() -> list[dict]:
 def update_row_category(filename: str, new_category: str) -> bool:
     """
     Find the row for *filename* in the Sheet and update its Category column.
-
-    Scans column A (Filename) for a matching entry and overwrites column B
-    (Category) with *new_category*.  Only the first matching row is updated.
-
-    Args:
-        filename:     Filename to search for in column A.
-        new_category: New category value to write into column B.
-
-    Returns:
-        ``True`` if a matching row was found and updated, ``False`` otherwise.
-
-    Raises:
-        HttpError: Propagated from the Sheets API.
+    Returns True if updated, False if not found.
     """
     service = _get_sheets_service()
     spreadsheet_id = _get_or_create_spreadsheet(service)
@@ -268,18 +229,16 @@ def update_row_category(filename: str, new_category: str) -> bool:
     row_index: Optional[int] = None
     for i, row in enumerate(rows):
         if row and row[0] == filename:
-            row_index = i + 1  # Sheets API uses 1-based row numbers
+            row_index = i + 1  # Sheets API is 1-based
             break
 
     if row_index is None:
         logger.warning("'%s' not found in sheet — cannot update category.", filename)
         return False
 
-    # Column B is the Category column (index 2 in A1 notation)
-    cell_range = f"Log!B{row_index}"
     service.spreadsheets().values().update(
         spreadsheetId=spreadsheet_id,
-        range=cell_range,
+        range=f"Log!B{row_index}",
         valueInputOption="RAW",
         body={"values": [[new_category]]},
     ).execute()

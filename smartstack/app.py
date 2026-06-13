@@ -64,40 +64,169 @@ def _import_modules():
 
 
 # ---------------------------------------------------------------------------
-# Sidebar — profile + navigation
+# Sidebar — account picker + navigation
 # ---------------------------------------------------------------------------
-def _render_sidebar_profile() -> None:
-    """Show Gmail profile picture and display name at the top of the sidebar."""
-    try:
-        from drive_manager import get_user_info
-        import requests as _req
-        user = get_user_info()
-        if user and user.get("picture"):
-            pic_resp = _req.get(user["picture"], timeout=5)
-            if pic_resp.status_code == 200:
-                import base64 as _b64
-                pic_b64 = _b64.b64encode(pic_resp.content).decode()
-                st.sidebar.markdown(
-                    f"""
-                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
-                      <img src="data:image/jpeg;base64,{pic_b64}"
-                           style="width:42px;height:42px;border-radius:50%;object-fit:cover;border:2px solid #4f8ef7"/>
-                      <div>
-                        <div style="font-weight:600;font-size:0.9rem;line-height:1.2">{user['name']}</div>
-                        <div style="font-size:0.72rem;color:#888;line-height:1.2">{user['email']}</div>
-                      </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-                return
-    except Exception:  # noqa: BLE001
-        pass
-    # Fallback — no profile yet (first run before auth)
-    st.sidebar.markdown(
-        "<div style='font-size:0.8rem;color:#888;margin-bottom:4px'>Sign in to see your profile</div>",
-        unsafe_allow_html=True,
+
+def _pic_b64(url: str) -> str:
+    """Fetch an image URL and return a base64 data URI, cached in session state."""
+    cache = st.session_state.setdefault("_pic_cache", {})
+    if url not in cache:
+        try:
+            import requests as _req
+            import base64 as _b64
+            r = _req.get(url, timeout=5)
+            if r.status_code == 200:
+                cache[url] = _b64.b64encode(r.content).decode()
+        except Exception:  # noqa: BLE001
+            pass
+    return cache.get(url, "")
+
+
+def _initial_circle(initial: str, size: int = 32) -> str:
+    """Return an HTML colored circle with the given initial."""
+    return (
+        f'<div style="width:{size}px;height:{size}px;border-radius:50%;'
+        f'background:#4f8ef7;color:#fff;display:flex;align-items:center;'
+        f'justify-content:center;font-weight:700;font-size:{size * 0.44:.0f}px">'
+        f'{initial}</div>'
     )
+
+
+def _render_sidebar_profile() -> None:
+    """Render the active-account header and multi-account manager."""
+    from drive_manager import (
+        get_active_account_email,
+        get_all_account_emails,
+        get_user_info,
+        set_active_account,
+        delete_account,
+        add_new_account,
+    )
+
+    active_email = get_active_account_email()
+    all_emails = get_all_account_emails()
+
+    # Cache account info per session to avoid repeated API calls
+    info_cache = st.session_state.setdefault("_acct_cache", {})
+    def _info(email: str) -> dict:
+        if email not in info_cache:
+            info_cache[email] = get_user_info(email) or {"name": email, "email": email, "picture": ""}
+        return info_cache[email]
+
+    # ── Active account header ────────────────────────────────────────────
+    if active_email:
+        user = _info(active_email)
+        first_name = user["name"].split()[0] if user.get("name") else "there"
+        pic = _pic_b64(user.get("picture", "")) if user.get("picture") else ""
+        if pic:
+            img_tag = (
+                f'<img src="data:image/jpeg;base64,{pic}" '
+                f'style="width:42px;height:42px;border-radius:50%;'
+                f'object-fit:cover;border:2px solid #4f8ef7"/>'
+            )
+        else:
+            img_tag = _initial_circle(first_name[0].upper(), 42)
+        st.sidebar.markdown(
+            f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">'
+            f'{img_tag}'
+            f'<div>'
+            f'<div style="font-weight:700;font-size:0.95rem;line-height:1.2">Hi, {first_name}!</div>'
+            f'<div style="font-size:0.72rem;color:#888;line-height:1.2">{user["email"]}</div>'
+            f'</div></div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.sidebar.markdown(
+            "<div style='font-size:0.8rem;color:#888;margin-bottom:4px'>"
+            "Sign in to see your profile</div>",
+            unsafe_allow_html=True,
+        )
+
+    # ── Account manager expander ──────────────────────────────────────────
+    other_emails = [e for e in all_emails if e != active_email]
+    n = len(other_emails)
+    expander_label = "Manage accounts" + (f" · {n} other" + ("s" if n > 1 else "") if n else "")
+
+    with st.sidebar.expander(expander_label):
+        # Other stored accounts
+        if other_emails:
+            st.markdown("**Other accounts**")
+            for email in other_emails:
+                user = _info(email)
+                display = user.get("name") or email
+                initial = display[0].upper()
+
+                col_av, col_txt, col_sw, col_del = st.columns([1, 4, 2, 1])
+                with col_av:
+                    st.markdown(_initial_circle(initial), unsafe_allow_html=True)
+                with col_txt:
+                    st.markdown(
+                        f"<div style='font-size:0.82rem;font-weight:600;line-height:1.2'>{display}</div>"
+                        f"<div style='font-size:0.68rem;color:#888;line-height:1.2'>{email}</div>",
+                        unsafe_allow_html=True,
+                    )
+                with col_sw:
+                    if st.button("Switch", key=f"_sw_{email}", use_container_width=True):
+                        set_active_account(email)
+                        info_cache.clear()
+                        st.session_state.pop("_confirm_delete", None)
+                        st.rerun()
+                with col_del:
+                    if st.button("🗑️", key=f"_del_{email}"):
+                        st.session_state["_confirm_delete"] = email
+
+                # Inline delete confirmation
+                if st.session_state.get("_confirm_delete") == email:
+                    st.warning(f"Remove **{display}** from this device?")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("Remove", key=f"_ok_{email}", type="primary"):
+                            delete_account(email)
+                            info_cache.pop(email, None)
+                            st.session_state.pop("_confirm_delete", None)
+                            st.rerun()
+                    with c2:
+                        if st.button("Cancel", key=f"_cx_{email}"):
+                            st.session_state.pop("_confirm_delete", None)
+                            st.rerun()
+
+            st.divider()
+
+        # Add account
+        if st.button("＋  Add another account", use_container_width=True):
+            with st.spinner("Opening browser for sign-in…"):
+                try:
+                    new_email = add_new_account()
+                    set_active_account(new_email)
+                    info_cache.clear()
+                    st.rerun()
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"Could not add account: {exc}")
+
+        # Sign out (remove active account)
+        if active_email:
+            if st.button("Sign out", use_container_width=True):
+                st.session_state["_confirm_logout"] = True
+
+            if st.session_state.get("_confirm_logout"):
+                st.warning(
+                    f"Sign out of **{active_email}**?  "
+                    "This removes stored credentials from this device."
+                )
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("Sign out", key="_ok_logout", type="primary"):
+                        delete_account(active_email)
+                        info_cache.clear()
+                        remaining = [e for e in all_emails if e != active_email]
+                        set_active_account(remaining[0] if remaining else None)
+                        st.session_state.pop("_confirm_logout", None)
+                        st.rerun()
+                with c2:
+                    if st.button("Cancel", key="_cx_logout"):
+                        st.session_state.pop("_confirm_logout", None)
+                        st.rerun()
+
 
 _render_sidebar_profile()
 st.sidebar.title("📚 SmartStack")

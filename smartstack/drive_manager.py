@@ -1,17 +1,16 @@
 """
-drive_manager.py — Google Drive integration for SmartStack.
+drive_manager.py — Google Drive integration + multi-account management.
 
 Responsibilities:
+- Manage multiple Google accounts (add, switch, delete, migrate legacy tokens).
 - Authenticate with Google Drive via OAuth2 (with token refresh).
-- Scan the root of the user's Drive for loose files (PDF, Word, Excel,
-  PowerPoint, and images) with no parent other than the Drive root.
-- Auto-create destination subfolders (Study, College Admin, Personal/Fun,
-  Miscellaneous).
-- Move classified files into the correct subfolder.
+- Scan the Drive root for loose files (PDF, Word, Excel, PowerPoint, images, video).
+- Auto-create destination subfolders and move classified files into them.
 """
 
 import logging
 import os
+import shutil
 from typing import Optional
 
 import requests as _requests
@@ -25,16 +24,17 @@ from googleapiclient.errors import HttpError
 from config import (
     DRIVE_SCOPES,
     DRIVE_TOKEN_PATH,
+    SHEETS_TOKEN_PATH,
     OAUTH_CLIENT_SECRET_PATH,
     CATEGORY_FOLDERS,
+    ACCOUNTS_DIR,
+    ACTIVE_ACCOUNT_FILE,
 )
 
 logger = logging.getLogger(__name__)
 
-# MIME type constants
 _MIME_FOLDER = "application/vnd.google-apps.folder"
 
-# All file types SmartStack can process
 _SUPPORTED_MIME_TYPES: list[str] = [
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # docx
@@ -49,83 +49,227 @@ _SUPPORTED_MIME_TYPES: list[str] = [
     "image/bmp",
     "image/tiff",
     "image/webp",
-    # Video — classified by filename only, never downloaded
     "video/mp4",
-    "video/x-msvideo",     # avi
-    "video/quicktime",     # mov
-    "video/x-matroska",   # mkv
-    "video/x-ms-wmv",     # wmv
+    "video/x-msvideo",   # avi
+    "video/quicktime",   # mov
+    "video/x-matroska",  # mkv
+    "video/x-ms-wmv",   # wmv
     "video/webm",
     "video/x-flv",
 ]
 
 
-def _get_drive_service() -> Resource:
+# ===========================================================================
+# Account management
+# ===========================================================================
+
+def get_active_account_email() -> Optional[str]:
+    """Return the email of the currently active account, or None."""
+    if os.path.exists(ACTIVE_ACCOUNT_FILE):
+        email = open(ACTIVE_ACCOUNT_FILE).read().strip()
+        return email or None
+    return None
+
+
+def set_active_account(email: Optional[str]) -> None:
+    """Set the active account email. Pass None to clear."""
+    os.makedirs(os.path.dirname(ACTIVE_ACCOUNT_FILE), exist_ok=True)
+    with open(ACTIVE_ACCOUNT_FILE, "w") as f:
+        f.write(email or "")
+    logger.info("Active account set to: %s", email)
+
+
+def _account_dir(email: str) -> str:
+    return os.path.join(ACCOUNTS_DIR, email)
+
+
+def _drive_token_path(email: str) -> str:
+    return os.path.join(_account_dir(email), "drive_token.json")
+
+
+def _sheets_token_path(email: str) -> str:
+    return os.path.join(_account_dir(email), "sheets_token.json")
+
+
+def get_active_sheets_token_path() -> str:
+    """Return the Sheets token path for the active account (or legacy fallback)."""
+    email = get_active_account_email()
+    return _sheets_token_path(email) if email else SHEETS_TOKEN_PATH
+
+
+def get_all_account_emails() -> list[str]:
+    """Return sorted list of emails for all locally stored accounts."""
+    if not os.path.isdir(ACCOUNTS_DIR):
+        return []
+    return sorted(
+        e for e in os.listdir(ACCOUNTS_DIR)
+        if os.path.isfile(_drive_token_path(e))
+    )
+
+
+def add_new_account() -> str:
     """
-    Authenticate and return an authorised Google Drive API service object.
-
-    Token is cached to disk and refreshed automatically when expired.
-    On first run the user is directed to a browser-based OAuth consent screen.
-
-    Returns:
-        An authorised ``googleapiclient.discovery.Resource`` for the Drive v3 API.
+    Run an OAuth consent flow for a new Google account, store its token,
+    and return the new account's email.
     """
-    creds: Optional[Credentials] = None
+    logger.info("Starting OAuth flow for a new account.")
+    flow = InstalledAppFlow.from_client_secrets_file(OAUTH_CLIENT_SECRET_PATH, DRIVE_SCOPES)
+    creds = flow.run_local_server(port=0)
 
-    if os.path.exists(DRIVE_TOKEN_PATH):
+    resp = _requests.get(
+        "https://www.googleapis.com/oauth2/v2/userinfo",
+        headers={"Authorization": f"Bearer {creds.token}"},
+        timeout=5,
+    )
+    resp.raise_for_status()
+    email: str = resp.json()["email"]
+
+    os.makedirs(_account_dir(email), exist_ok=True)
+    with open(_drive_token_path(email), "w") as f:
+        f.write(creds.to_json())
+    logger.info("Stored credentials for new account: %s", email)
+    return email
+
+
+def delete_account(email: str) -> None:
+    """Remove all locally stored credentials for *email*."""
+    account_dir = _account_dir(email)
+    if os.path.isdir(account_dir):
+        shutil.rmtree(account_dir)
+        logger.info("Removed credentials for %s.", email)
+    if get_active_account_email() == email:
+        set_active_account(None)
+
+
+def _try_migrate_legacy_tokens() -> None:
+    """
+    If pre-multi-account flat token files exist, migrate them into the
+    accounts/ directory structure. Runs at most once and fails gracefully.
+    """
+    if os.path.isdir(ACCOUNTS_DIR) and os.listdir(ACCOUNTS_DIR):
+        return  # already migrated
+    if not os.path.exists(DRIVE_TOKEN_PATH):
+        return  # nothing to migrate
+    try:
         creds = Credentials.from_authorized_user_file(DRIVE_TOKEN_PATH, DRIVE_SCOPES)
-        logger.debug("Loaded Drive credentials from token cache.")
+        if not creds.valid and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        resp = _requests.get(
+            "https://www.googleapis.com/oauth2/v2/userinfo",
+            headers={"Authorization": f"Bearer {creds.token}"},
+            timeout=5,
+        )
+        if resp.status_code != 200:
+            return
+        email = resp.json().get("email")
+        if not email:
+            return
+        os.makedirs(_account_dir(email), exist_ok=True)
+        shutil.copy2(DRIVE_TOKEN_PATH, _drive_token_path(email))
+        if os.path.exists(SHEETS_TOKEN_PATH):
+            shutil.copy2(SHEETS_TOKEN_PATH, _sheets_token_path(email))
+        set_active_account(email)
+        logger.info("Migrated legacy tokens → accounts/%s/", email)
+    except Exception as exc:
+        logger.debug("Legacy token migration skipped: %s", exc)
+
+
+_try_migrate_legacy_tokens()
+
+
+# ===========================================================================
+# Auth helpers
+# ===========================================================================
+
+def _get_drive_credentials() -> Credentials:
+    """Return valid Drive credentials for the active account, re-authing if needed."""
+    email = get_active_account_email()
+    token_path = _drive_token_path(email) if email else DRIVE_TOKEN_PATH
+
+    creds: Optional[Credentials] = None
+    if os.path.exists(token_path):
+        creds = Credentials.from_authorized_user_file(token_path, DRIVE_SCOPES)
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            logger.info("Drive token expired — refreshing.")
             creds.refresh(Request())
         else:
-            logger.info("Drive OAuth flow starting — browser window will open.")
-            flow = InstalledAppFlow.from_client_secrets_file(
-                OAUTH_CLIENT_SECRET_PATH, DRIVE_SCOPES
-            )
+            flow = InstalledAppFlow.from_client_secrets_file(OAUTH_CLIENT_SECRET_PATH, DRIVE_SCOPES)
             creds = flow.run_local_server(port=0)
+            # Discover email so we store in the right place
+            try:
+                resp = _requests.get(
+                    "https://www.googleapis.com/oauth2/v2/userinfo",
+                    headers={"Authorization": f"Bearer {creds.token}"},
+                    timeout=5,
+                )
+                if resp.status_code == 200:
+                    email = resp.json().get("email")
+                    if email:
+                        token_path = _drive_token_path(email)
+                        set_active_account(email)
+            except Exception:
+                pass
+        os.makedirs(os.path.dirname(token_path), exist_ok=True)
+        with open(token_path, "w") as f:
+            f.write(creds.to_json())
 
-        os.makedirs(os.path.dirname(DRIVE_TOKEN_PATH), exist_ok=True)
-        with open(DRIVE_TOKEN_PATH, "w") as token_file:
-            token_file.write(creds.to_json())
-        logger.info("Drive credentials saved to %s", DRIVE_TOKEN_PATH)
+    return creds
 
-    service: Resource = build("drive", "v3", credentials=creds)
-    return service
 
+def _get_drive_service() -> Resource:
+    return build("drive", "v3", credentials=_get_drive_credentials())
+
+
+# ===========================================================================
+# User info
+# ===========================================================================
+
+def get_user_info(email: Optional[str] = None) -> Optional[dict]:
+    """
+    Return name / email / picture for *email* (or the active account if None).
+    Returns None on any error.
+    """
+    try:
+        target = email or get_active_account_email()
+        if not target:
+            return None
+        token_path = _drive_token_path(target)
+        if not os.path.exists(token_path):
+            return None
+        creds = Credentials.from_authorized_user_file(token_path, DRIVE_SCOPES)
+        if not creds.valid and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            with open(token_path, "w") as f:
+                f.write(creds.to_json())
+        resp = _requests.get(
+            "https://www.googleapis.com/oauth2/v2/userinfo",
+            headers={"Authorization": f"Bearer {creds.token}"},
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            return {
+                "name": data.get("name", ""),
+                "email": data.get("email", target),
+                "picture": data.get("picture", ""),
+            }
+        return None
+    except Exception as exc:
+        logger.debug("Could not fetch user info for %s: %s", email, exc)
+        return None
+
+
+# ===========================================================================
+# Drive operations
+# ===========================================================================
 
 def _get_root_folder_id(service: Resource) -> str:
-    """
-    Return the file ID of the user's 'My Drive' root folder.
-
-    Args:
-        service: Authorised Drive API service.
-
-    Returns:
-        The root folder file ID string.
-    """
     root = service.files().get(fileId="root", fields="id").execute()
-    root_id: str = root["id"]
-    logger.debug("Drive root folder ID: %s", root_id)
-    return root_id
+    return root["id"]
 
 
 def _get_or_create_folder(service: Resource, name: str, parent_id: str) -> str:
-    """
-    Return the file ID of a named subfolder inside *parent_id*, creating it
-    if it does not already exist.
-
-    Args:
-        service:   Authorised Drive API service.
-        name:      The desired folder name.
-        parent_id: File ID of the parent folder.
-
-    Returns:
-        File ID of the (possibly newly created) subfolder.
-    """
-    # Search for an existing folder with this name under the parent
     query = (
         f"name = '{name}' "
         f"and mimeType = '{_MIME_FOLDER}' "
@@ -138,49 +282,24 @@ def _get_or_create_folder(service: Resource, name: str, parent_id: str) -> str:
         .execute()
     )
     files = results.get("files", [])
-
     if files:
-        folder_id: str = files[0]["id"]
-        logger.debug("Folder '%s' already exists (id=%s).", name, folder_id)
-        return folder_id
-
-    # Create the folder
-    metadata = {
-        "name": name,
-        "mimeType": _MIME_FOLDER,
-        "parents": [parent_id],
-    }
+        return files[0]["id"]
+    metadata = {"name": name, "mimeType": _MIME_FOLDER, "parents": [parent_id]}
     folder = service.files().create(body=metadata, fields="id").execute()
-    folder_id = folder["id"]
+    folder_id: str = folder["id"]
     logger.info("Created Drive folder '%s' (id=%s).", name, folder_id)
     return folder_id
 
 
 def scan_root_for_files() -> list[dict]:
-    """
-    Return a list of supported files sitting directly in the Drive root.
-
-    Supported types: PDF, DOCX, DOC, XLSX, XLS, PPTX, PPT, and common images.
-    Files already inside a subfolder are not returned.
-
-    Each item in the returned list is a dict with keys:
-        ``id``   — Drive file ID
-        ``name`` — filename including extension
-
-    Returns:
-        List of dicts describing loose supported files in the Drive root.
-    """
+    """Return supported files sitting directly in the Drive root."""
     service = _get_drive_service()
     root_id = _get_root_folder_id(service)
-
-    mime_conditions = " or ".join(
-        f"mimeType = '{m}'" for m in _SUPPORTED_MIME_TYPES
-    )
+    mime_conditions = " or ".join(f"mimeType = '{m}'" for m in _SUPPORTED_MIME_TYPES)
     query = f"({mime_conditions}) and '{root_id}' in parents and trashed = false"
 
     files: list[dict] = []
     page_token: Optional[str] = None
-
     while True:
         response = (
             service.files()
@@ -201,42 +320,22 @@ def scan_root_for_files() -> list[dict]:
     return files
 
 
-# Keep old name as alias so nothing breaks if called elsewhere
 scan_root_for_pdfs = scan_root_for_files
 
 
 def move_pdf_to_category(file_id: str, category: str) -> None:
-    """
-    Move a Drive file into the subfolder matching *category*.
-
-    The destination subfolder is auto-created under Drive root if absent.
-    The file is simultaneously removed from the root so it no longer appears
-    as a loose file.
-
-    Args:
-        file_id:  Drive file ID of the PDF to move.
-        category: One of ``"Study"``, ``"College Admin"``, ``"Personal/Fun"``.
-
-    Raises:
-        ValueError: If *category* is not a recognised value.
-        HttpError:  Propagated from the Drive API on network/permission errors.
-    """
+    """Move a Drive file into the subfolder matching *category*."""
     folder_name = CATEGORY_FOLDERS.get(category)
     if folder_name is None:
         raise ValueError(
             f"Unknown category '{category}'. "
             f"Expected one of: {list(CATEGORY_FOLDERS.keys())}"
         )
-
     service = _get_drive_service()
     root_id = _get_root_folder_id(service)
-
     dest_folder_id = _get_or_create_folder(service, folder_name, root_id)
-
-    # Fetch current parents so we can remove the file from root
     file_meta = service.files().get(fileId=file_id, fields="parents").execute()
     current_parents = ",".join(file_meta.get("parents", []))
-
     try:
         service.files().update(
             fileId=file_id,
@@ -244,30 +343,14 @@ def move_pdf_to_category(file_id: str, category: str) -> None:
             removeParents=current_parents,
             fields="id, parents",
         ).execute()
-        logger.info(
-            "Moved file %s → folder '%s' (id=%s).",
-            file_id,
-            folder_name,
-            dest_folder_id,
-        )
+        logger.info("Moved file %s → folder '%s'.", file_id, folder_name)
     except HttpError as exc:
         logger.error("Failed to move file %s: %s", file_id, exc)
         raise
 
 
 def download_pdf_content(file_id: str) -> bytes:
-    """
-    Download the raw bytes of a Drive PDF file.
-
-    Args:
-        file_id: Drive file ID.
-
-    Returns:
-        Raw PDF bytes.
-
-    Raises:
-        HttpError: Propagated from the Drive API.
-    """
+    """Download the raw bytes of a Drive file."""
     service = _get_drive_service()
     request = service.files().get_media(fileId=file_id)
     content: bytes = request.execute()
@@ -276,26 +359,10 @@ def download_pdf_content(file_id: str) -> bytes:
 
 
 def find_file_by_name(filename: str) -> Optional[str]:
-    """
-    Search Google Drive for a PDF with the given filename and return its file ID.
-
-    Searches across all folders (not just root) so it works after a file has
-    already been moved into a category subfolder.
-
-    Args:
-        filename: Exact filename to search for (including .pdf extension).
-
-    Returns:
-        Drive file ID string if found, or ``None`` if not found.
-    """
+    """Search Drive for a file by exact name (any type) and return its ID."""
     service = _get_drive_service()
-    # Escape single quotes in filename for the query string
     safe_name = filename.replace("'", "\\'")
-    query = (
-        f"name = '{safe_name}' "
-        f"and mimeType = '{_MIME_PDF}' "
-        f"and trashed = false"
-    )
+    query = f"name = '{safe_name}' and trashed = false"
     results = (
         service.files()
         .list(q=query, spaces="drive", fields="files(id, name)")
@@ -303,26 +370,14 @@ def find_file_by_name(filename: str) -> Optional[str]:
     )
     files = results.get("files", [])
     if files:
-        logger.info("Found file '%s' with id=%s.", filename, files[0]["id"])
+        logger.info("Found '%s' with id=%s.", filename, files[0]["id"])
         return files[0]["id"]
     logger.warning("File '%s' not found in Drive.", filename)
     return None
 
 
 def reclassify_file(filename: str, new_category: str) -> None:
-    """
-    Find a PDF by name anywhere in Drive and move it to a new category folder.
-
-    Args:
-        filename:     Exact filename of the PDF to reclassify.
-        new_category: Target category — one of ``"Study"``, ``"College Admin"``,
-                      ``"Personal/Fun"``.
-
-    Raises:
-        FileNotFoundError: If the file cannot be found in Drive.
-        ValueError:        If *new_category* is not a recognised value.
-        HttpError:         Propagated from the Drive API.
-    """
+    """Find a file anywhere in Drive and move it to a new category folder."""
     file_id = find_file_by_name(filename)
     if file_id is None:
         raise FileNotFoundError(
@@ -331,55 +386,3 @@ def reclassify_file(filename: str, new_category: str) -> None:
         )
     move_pdf_to_category(file_id, new_category)
     logger.info("Reclassified '%s' → '%s'.", filename, new_category)
-
-
-def get_user_info() -> Optional[dict]:
-    """
-    Return the signed-in Google user's display name, email, and profile
-    picture URL by calling the OAuth2 userinfo endpoint.
-
-    Requires the token to have been issued with the ``userinfo.profile`` and
-    ``userinfo.email`` scopes (added to ``DRIVE_SCOPES``).  Returns ``None``
-    silently if the token predates those scopes or any network error occurs.
-
-    Returns:
-        Dict with keys ``name``, ``email``, ``picture`` or ``None``.
-    """
-    try:
-        creds = _get_drive_credentials()
-        resp = _requests.get(
-            "https://www.googleapis.com/oauth2/v2/userinfo",
-            headers={"Authorization": f"Bearer {creds.token}"},
-            timeout=5,
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            return {
-                "name": data.get("name", ""),
-                "email": data.get("email", ""),
-                "picture": data.get("picture", ""),
-            }
-        logger.warning("userinfo returned %d — token may lack profile scope.", resp.status_code)
-        return None
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("Could not fetch user info: %s", exc)
-        return None
-
-
-def _get_drive_credentials():
-    """Return valid Drive credentials (re-authenticating if needed)."""
-    creds: Optional[Credentials] = None
-    if os.path.exists(DRIVE_TOKEN_PATH):
-        creds = Credentials.from_authorized_user_file(DRIVE_TOKEN_PATH, DRIVE_SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                OAUTH_CLIENT_SECRET_PATH, DRIVE_SCOPES
-            )
-            creds = flow.run_local_server(port=0)
-        os.makedirs(os.path.dirname(DRIVE_TOKEN_PATH), exist_ok=True)
-        with open(DRIVE_TOKEN_PATH, "w") as f:
-            f.write(creds.to_json())
-    return creds

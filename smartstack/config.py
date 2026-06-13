@@ -34,6 +34,8 @@ SHEETS_SCOPES: list[str] = [
 CREDENTIALS_DIR: str = os.path.join(os.path.dirname(__file__), "credentials")
 DRIVE_TOKEN_PATH: str = os.path.join(CREDENTIALS_DIR, "drive_token.json")
 SHEETS_TOKEN_PATH: str = os.path.join(CREDENTIALS_DIR, "sheets_token.json")
+ACCOUNTS_DIR: str = os.path.join(CREDENTIALS_DIR, "accounts")
+ACTIVE_ACCOUNT_FILE: str = os.path.join(CREDENTIALS_DIR, "active_account.txt")
 OAUTH_CLIENT_SECRET_PATH: str = os.path.join(
     CREDENTIALS_DIR,
     os.getenv("OAUTH_CLIENT_SECRET_FILE", "client_secret.json"),
