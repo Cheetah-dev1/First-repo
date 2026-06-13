@@ -8,6 +8,7 @@ Includes retry logic for transient API failures.
 
 import json
 import logging
+import os
 import time
 from typing import Optional
 
@@ -18,6 +19,7 @@ from config import (
     GROQ_MODEL,
     MAX_TOKENS,
     RETRY_COUNT,
+    DIRECTIVES_PATH,
 )
 
 logger = logging.getLogger(__name__)
@@ -25,7 +27,7 @@ logger = logging.getLogger(__name__)
 _EXPECTED_KEYS = {"category", "topic", "summary"}
 _VALID_CATEGORIES = {"Study", "College Admin", "Personal/Fun", "Miscellaneous"}
 
-_SYSTEM_PROMPT = """\
+_BASE_SYSTEM_PROMPT = """\
 You are a document classifier. The user will provide extracted text from a PDF.
 Your task is to classify the document and return ONLY valid JSON — no prose,
 no markdown fences, no explanation — in exactly this shape:
@@ -43,6 +45,23 @@ Rules:
 - "summary" must be exactly three lines separated by \\n
 - Return ONLY the JSON object, nothing else
 """
+
+
+def _build_system_prompt() -> str:
+    """Return the system prompt with any user-defined directives appended."""
+    try:
+        if os.path.exists(DIRECTIVES_PATH):
+            directives = open(DIRECTIVES_PATH).read().strip()
+            if directives:
+                return (
+                    _BASE_SYSTEM_PROMPT
+                    + "\nAdditional rules set by the user — follow these closely:\n"
+                    + directives
+                    + "\n"
+                )
+    except Exception:  # noqa: BLE001
+        pass
+    return _BASE_SYSTEM_PROMPT
 
 
 def classify_document(
@@ -84,7 +103,7 @@ def classify_document(
                 model=GROQ_MODEL,
                 max_tokens=MAX_TOKENS,
                 messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "system", "content": _build_system_prompt()},
                     {"role": "user", "content": user_message},
                 ],
             )

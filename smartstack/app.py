@@ -233,7 +233,7 @@ st.sidebar.title("📚 SmartStack")
 st.sidebar.markdown("---")
 page = st.sidebar.radio(
     "Navigate",
-    ["Organise My Drive", "Ask a Question", "Reclassify Files"],
+    ["Organise My Drive", "Ask a Question", "Reclassify Files", "Settings"],
     index=0,
 )
 st.sidebar.markdown("---")
@@ -556,6 +556,53 @@ def page_reclassify() -> None:
 
 
 # ===========================================================================
+# PAGE 4 — Settings / Directives
+# ===========================================================================
+def page_settings() -> None:
+    """Render the Settings page for custom classification directives."""
+    from config import DIRECTIVES_PATH
+
+    st.title("⚙️ Classification Directives")
+    st.markdown(
+        "Write custom rules that guide the AI when classifying your files. "
+        "Plain English, one rule per line. Changes take effect on the next scan."
+    )
+
+    current = ""
+    if os.path.exists(DIRECTIVES_PATH):
+        with open(DIRECTIVES_PATH) as f:
+            current = f.read()
+
+    directives = st.text_area(
+        "Your directives",
+        value=current,
+        height=280,
+        placeholder=(
+            "Examples:\n"
+            "Files with 'AIMUN' or 'MUN' in the name go to College Admin\n"
+            "Anything about Netflix, YouTube, or entertainment goes to Personal/Fun\n"
+            "Lecture notes, chapter summaries, and past papers go to Study\n"
+            "Receipts, invoices, and bank statements go to Miscellaneous"
+        ),
+    )
+
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        if st.button("💾 Save", type="primary", use_container_width=True):
+            with open(DIRECTIVES_PATH, "w") as f:
+                f.write(directives)
+            st.success("Directives saved! They'll apply on the next scan.")
+    with col2:
+        if directives.strip() and st.button("🗑️ Clear all", use_container_width=True):
+            open(DIRECTIVES_PATH, "w").close()
+            st.rerun()
+
+    if current.strip():
+        st.markdown("---")
+        st.caption(f"Directives file: `{DIRECTIVES_PATH}`")
+
+
+# ===========================================================================
 # Router
 # ===========================================================================
 if page == "Organise My Drive":
@@ -564,3 +611,5 @@ elif page == "Ask a Question":
     page_ask()
 elif page == "Reclassify Files":
     page_reclassify()
+elif page == "Settings":
+    page_settings()
