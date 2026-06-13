@@ -50,11 +50,13 @@ RETRY_COUNT: int = int(os.getenv("RETRY_COUNT", "3"))
 FOLDER_STUDY: str = os.getenv("FOLDER_STUDY", "Study")
 FOLDER_COLLEGE_ADMIN: str = os.getenv("FOLDER_COLLEGE_ADMIN", "College Admin")
 FOLDER_PERSONAL_FUN: str = os.getenv("FOLDER_PERSONAL_FUN", "Personal/Fun")
+FOLDER_MISCELLANEOUS: str = os.getenv("FOLDER_MISCELLANEOUS", "Miscellaneous")
 
 CATEGORY_FOLDERS: dict[str, str] = {
     "Study": FOLDER_STUDY,
     "College Admin": FOLDER_COLLEGE_ADMIN,
     "Personal/Fun": FOLDER_PERSONAL_FUN,
+    "Miscellaneous": FOLDER_MISCELLANEOUS,
 }
 
 # ---------------------------------------------------------------------------

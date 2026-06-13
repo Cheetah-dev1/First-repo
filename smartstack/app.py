@@ -288,7 +288,7 @@ def _run_query_flow(question: str) -> None:
 # ===========================================================================
 # PAGE 3 — Reclassify Files
 # ===========================================================================
-_CATEGORIES = ["Study", "College Admin", "Personal/Fun"]
+_CATEGORIES = ["Study", "College Admin", "Personal/Fun", "Miscellaneous"]
 
 
 def page_reclassify() -> None:

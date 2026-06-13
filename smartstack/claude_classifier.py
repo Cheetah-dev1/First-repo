@@ -23,7 +23,7 @@ from config import (
 logger = logging.getLogger(__name__)
 
 _EXPECTED_KEYS = {"category", "topic", "summary"}
-_VALID_CATEGORIES = {"Study", "College Admin", "Personal/Fun"}
+_VALID_CATEGORIES = {"Study", "College Admin", "Personal/Fun", "Miscellaneous"}
 
 _SYSTEM_PROMPT = """\
 You are a document classifier. The user will provide extracted text from a PDF.
@@ -31,13 +31,14 @@ Your task is to classify the document and return ONLY valid JSON — no prose,
 no markdown fences, no explanation — in exactly this shape:
 
 {
-  "category": "Study | College Admin | Personal/Fun",
+  "category": "Study | College Admin | Personal/Fun | Miscellaneous",
   "topic": "one-line topic (max 15 words)",
   "summary": "three-line summary separated by newlines"
 }
 
 Rules:
-- "category" MUST be exactly one of: Study, College Admin, Personal/Fun
+- "category" MUST be exactly one of: Study, College Admin, Personal/Fun, Miscellaneous
+- Use Miscellaneous for signatures, photos, ID scans, forms with no clear academic or admin purpose, or anything that doesn't fit the other categories
 - "topic" must be a single line, 15 words or fewer
 - "summary" must be exactly three lines separated by \\n
 - Return ONLY the JSON object, nothing else
@@ -215,5 +216,8 @@ def _normalise_category(raw_category: str) -> Optional[str]:
         "personal/fun": "Personal/Fun",
         "personal fun": "Personal/Fun",
         "leisure": "Personal/Fun",
+        "miscellaneous": "Miscellaneous",
+        "misc": "Miscellaneous",
+        "other": "Miscellaneous",
     }
     return mapping.get(raw_category.lower().strip())
