@@ -47,8 +47,9 @@ OAUTH_CLIENT_SECRET_PATH: str = os.path.join(
 # ---------------------------------------------------------------------------
 GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", "1024"))
+MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", "512"))
 RETRY_COUNT: int = int(os.getenv("RETRY_COUNT", "3"))
+PROCESSING_DELAY: float = float(os.getenv("PROCESSING_DELAY", "3"))
 
 # ---------------------------------------------------------------------------
 # Google Drive folder names
@@ -80,7 +81,7 @@ SHEET_COLUMNS: list[str] = [
 # ---------------------------------------------------------------------------
 # PDF processing
 # ---------------------------------------------------------------------------
-MAX_WORDS: int = int(os.getenv("MAX_WORDS", "3000"))
+MAX_WORDS: int = int(os.getenv("MAX_WORDS", "800"))
 
 
 def validate_config() -> None:

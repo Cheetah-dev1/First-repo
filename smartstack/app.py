@@ -12,6 +12,7 @@ Run with:
 import logging
 import os
 import sys
+import time
 import traceback
 
 import pandas as pd
@@ -367,6 +368,11 @@ def _run_organise_flow() -> None:
             logger.exception("Error processing '%s'.", filename)
 
         results.append(row)
+
+        # Pause between files to stay within Groq's free-tier rate limits
+        if idx < len(pdfs) - 1:
+            from config import PROCESSING_DELAY
+            time.sleep(PROCESSING_DELAY)
 
     progress_bar.progress(1.0, text="All files processed!")
     status_area.empty()
