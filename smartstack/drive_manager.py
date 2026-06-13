@@ -35,7 +35,28 @@ logger = logging.getLogger(__name__)
 
 _MIME_FOLDER = "application/vnd.google-apps.folder"
 
+# Google-native formats that require export instead of direct download
+GOOGLE_EXPORT_MAP: dict[str, dict] = {
+    "application/vnd.google-apps.document": {
+        "export_mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "extension": ".docx",
+    },
+    "application/vnd.google-apps.spreadsheet": {
+        "export_mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "extension": ".xlsx",
+    },
+    "application/vnd.google-apps.presentation": {
+        "export_mime": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "extension": ".pptx",
+    },
+}
+
 _SUPPORTED_MIME_TYPES: list[str] = [
+    # Google native
+    "application/vnd.google-apps.document",      # Google Docs
+    "application/vnd.google-apps.spreadsheet",   # Google Sheets
+    "application/vnd.google-apps.presentation",  # Google Slides
+    # Office formats
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # docx
     "application/msword",                                                         # doc
@@ -309,7 +330,7 @@ def scan_root_for_files() -> list[dict]:
             .list(
                 q=query,
                 spaces="drive",
-                fields="nextPageToken, files(id, name)",
+                fields="nextPageToken, files(id, name, mimeType)",
                 pageToken=page_token,
             )
             .execute()
@@ -352,10 +373,20 @@ def move_pdf_to_category(file_id: str, category: str) -> None:
         raise
 
 
-def download_pdf_content(file_id: str) -> bytes:
-    """Download the raw bytes of a Drive file."""
+def download_pdf_content(file_id: str, mime_type: str = "") -> bytes:
+    """
+    Download a Drive file's bytes, exporting Google-native formats first.
+    Pass *mime_type* (from the scan result) to skip an extra API call.
+    """
     service = _get_drive_service()
-    request = service.files().get_media(fileId=file_id)
+    if not mime_type:
+        mime_type = service.files().get(fileId=file_id, fields="mimeType").execute().get("mimeType", "")
+    if mime_type in GOOGLE_EXPORT_MAP:
+        export_mime = GOOGLE_EXPORT_MAP[mime_type]["export_mime"]
+        request = service.files().export_media(fileId=file_id, mimeType=export_mime)
+        logger.debug("Exporting Google-native file %s as %s.", file_id, export_mime)
+    else:
+        request = service.files().get_media(fileId=file_id)
     content: bytes = request.execute()
     logger.debug("Downloaded %d bytes for file id=%s.", len(content), file_id)
     return content

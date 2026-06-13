@@ -252,7 +252,7 @@ def page_organise() -> None:
     st.markdown(
         "Click **Scan My Drive** to find loose files in your Drive root, "
         "classify them with AI, and move them into the right folders. "
-        "Supports PDF, Word, Excel, PowerPoint, images and videos."
+        "Supports PDF, Google Docs, Google Sheets, Google Slides, Word, Excel, PowerPoint, images and videos."
     )
 
     if st.button("🔍 Scan My Drive", type="primary"):
@@ -294,7 +294,7 @@ def _run_organise_flow() -> None:
         st.info("✅ Nothing to organise! No loose files found in your Drive root.")
         return
 
-    st.success(f"Found **{len(pdfs)} PDF(s)** to process.")
+    st.success(f"Found **{len(pdfs)} file(s)** to process.")
     st.markdown("---")
 
     results: list[dict] = []
@@ -318,18 +318,28 @@ def _run_organise_flow() -> None:
         }
 
         try:
+            from drive_manager import GOOGLE_EXPORT_MAP
             _VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".wmv", ".webm", ".flv"}
+            mime_type: str = pdf_file.get("mimeType", "")
             file_ext = os.path.splitext(filename)[1].lower()
             is_video = file_ext in _VIDEO_EXTENSIONS
+            is_google_native = mime_type in GOOGLE_EXPORT_MAP
 
-            # 1. Get content — videos are classified by filename only (no download)
+            # 1. Get content
             if is_video:
                 text = (
                     f"This is a video file named: {filename}. "
                     f"Classify it based on the filename alone."
                 )
+            elif is_google_native:
+                # Export Google Docs/Sheets/Slides and use the export extension
+                # so the right text extractor is chosen
+                effective_ext = GOOGLE_EXPORT_MAP[mime_type]["extension"]
+                effective_name = filename + effective_ext
+                pdf_bytes = download_pdf_content(file_id, mime_type=mime_type)
+                text = extract_text_from_bytes(pdf_bytes, filename=effective_name)
             else:
-                pdf_bytes = download_pdf_content(file_id)
+                pdf_bytes = download_pdf_content(file_id, mime_type=mime_type)
                 text = extract_text_from_bytes(pdf_bytes, filename=filename)
 
             # 2. Classify with AI
