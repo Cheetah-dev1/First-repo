@@ -160,6 +160,13 @@ h1, h2, h3, h4 {{ color: {head_color} !important; }}
 hr {{ border-color: {input_border} !important; }}
 .stSelectbox > div > div {{ background-color: {input_bg} !important; border-color: {input_border} !important; }}
 [data-testid="stProgressBar"] > div {{ background-color: {input_border} !important; }}
+.ss-stack {{
+    background: {"linear-gradient(90deg,#00C6FF,#7B2FBE)" if dark_bg else "linear-gradient(90deg,#FFB800,#FF5500)"};
+    -webkit-background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+    background-clip: text !important;
+    display: inline-block;
+}}
 </style>
 """
 
@@ -403,7 +410,7 @@ st.sidebar.markdown(f"""
 <div style="display:flex;align-items:center;gap:12px;padding:6px 0 10px 0;">
   {_logo_img}
   <span style="font-size:24px;font-weight:800;line-height:1;letter-spacing:-0.5px;">
-    <span style="color:{_smart_color};">Smart</span><span style="background:{_stack_gradient};-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Stack</span>
+    <span style="color:{_smart_color};">Smart</span><span class="ss-stack">Stack</span>
   </span>
 </div>
 """, unsafe_allow_html=True)
