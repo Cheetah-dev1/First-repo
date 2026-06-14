@@ -160,7 +160,6 @@ h1, h2, h3, h4 {{ color: {head_color} !important; }}
 hr {{ border-color: {input_border} !important; }}
 .stSelectbox > div > div {{ background-color: {input_bg} !important; border-color: {input_border} !important; }}
 [data-testid="stProgressBar"] > div {{ background-color: {input_border} !important; }}
-[data-testid="stSidebarHeader"] img {{ transform: scale(1.8); transform-origin: left center; }}
 </style>
 """
 
@@ -373,10 +372,26 @@ def _render_sidebar_profile() -> None:
 
 
 if os.path.exists(_LOGO_PATH):
-    st.logo(_LOGO_PATH, size="large")
+    import base64 as _b64
+    with open(_LOGO_PATH, "rb") as _f:
+        _logo_b64 = _b64.b64encode(_f.read()).decode()
+    st.sidebar.markdown(f"""
+<div style="display:flex;align-items:center;gap:12px;padding:6px 0 10px 0;">
+  <img src="data:image/png;base64,{_logo_b64}"
+       style="height:54px;width:auto;flex-shrink:0;">
+  <span style="font-size:24px;font-weight:800;line-height:1;letter-spacing:-0.5px;">
+    <span style="color:#1a1a1a;">Smart</span><span style="background:linear-gradient(90deg,#FFB800,#FF5500);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Stack</span>
+  </span>
+</div>
+""", unsafe_allow_html=True)
+else:
+    st.sidebar.markdown("""
+<div style="font-size:24px;font-weight:800;padding:6px 0 10px 0;">
+  <span style="color:#1a1a1a;">Smart</span><span style="background:linear-gradient(90deg,#FFB800,#FF5500);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Stack</span>
+</div>
+""", unsafe_allow_html=True)
 
 _render_sidebar_profile()
-st.sidebar.title("SmartStack")
 st.sidebar.markdown("---")
 page = st.sidebar.radio(
     "Navigate",
