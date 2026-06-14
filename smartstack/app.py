@@ -76,27 +76,6 @@ def _hex_to_hsl(hex_color: str) -> tuple[float, float, float]:
     return hue % 360, s, l
 
 
-def _button_text_color(hex_color: str) -> str:
-    """
-    Auto-pick button text color based on hue proximity to blue.
-    Blue (hue ~240°) is perceptually dark even when saturated, so it needs
-    light text. We treat any hue within 90° of blue (150–330°) as 'blue-ish'
-    and return near-white; everything else gets dark text.
-    """
-    try:
-        hue, sat, lit = _hex_to_hsl(hex_color)
-        # Very light colors (high lightness) always get dark text
-        if lit > 0.65:
-            return "#1a1a1a"
-        # Very dark colors always get light text
-        if lit < 0.35:
-            return "#F0F4FF"
-        # Mid-range: decide by hue proximity to blue (240°)
-        blue_dist = min(abs(hue - 240), 360 - abs(hue - 240))
-        return "#F0F4FF" if blue_dist <= 90 else "#1a1a1a"
-    except Exception:
-        return "#1a1a1a"
-
 
 def _darken(hex_color: str, amount: float = 0.15) -> str:
     """Return a slightly darkened version of hex_color for hover states."""
@@ -121,7 +100,7 @@ def _is_dark_bg(hex_color: str) -> bool:
 
 
 def _build_theme_css(primary: str, secondary: str, button: str, preset: str = "light") -> str:
-    btn_text   = _button_text_color(button)
+    btn_text   = "#F0F4FF" if _is_dark_bg(button) else "#1a1a1a"
     btn_hover  = _darken(button)
     dark_bg    = _is_dark_bg(primary)
     text_color = "#D8E0F0" if dark_bg else "#1a1a1a"
@@ -954,9 +933,7 @@ def page_settings() -> None:
             col_button    = st.color_picker("Button colour",
                                             value=saved_colors.get("button",    "#8B7355"),
                                             key="color_button")
-        btn_txt = _button_text_color(col_button)
-        btn_txt_label = "light" if btn_txt.startswith("#F") else "dark"
-        st.caption(f"Button text will be **{btn_txt_label}** (`{btn_txt}`) — auto-picked from hue proximity to blue.")
+        st.caption("Button text: white with black outline.")
 
     st.divider()
 
