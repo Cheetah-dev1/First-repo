@@ -727,7 +727,7 @@ def page_settings() -> None:
     # ── Theme ─────────────────────────────────────────────────────────────────
     st.subheader("🎨 Theme")
     theme_idx = 1 if settings.get("theme") == "dark" else 0
-    theme = st.radio("", ["Light", "Dark"], index=theme_idx, horizontal=True,
+    theme = st.radio("Theme", ["Light", "Dark"], index=theme_idx, horizontal=True,
                      label_visibility="collapsed")
     theme_val = theme.lower()
 
