@@ -403,6 +403,22 @@ page = st.sidebar.radio(
     index=0,
 )
 st.sidebar.markdown("---")
+
+# ── Quick Stats + Recent Files ────────────────────────────────────────────────
+_stats = __import__("settings_manager").load_settings().get("stats", {})
+_last  = _stats.get("last_scan", "") or "Never"
+st.sidebar.markdown(
+    f"📁 **{_stats.get('files_organised', 0)}** files organised &nbsp;·&nbsp; "
+    f"❓ **{_stats.get('questions_asked', 0)}** questions asked  \n"
+    f"🕒 Last scan: **{_last}**"
+)
+_recent = _stats.get("recent_files", [])
+if _recent:
+    st.sidebar.markdown("**Recently organised:**")
+    for _rf in _recent:
+        st.sidebar.caption(f"📄 {_rf}")
+
+st.sidebar.markdown("---")
 st.sidebar.caption(
     "SmartStack uses AI to organise your Google Drive files and lets you "
     "ask questions about your study material."
@@ -527,6 +543,9 @@ def _run_organise_flow() -> None:
 
             row["Status"] = "✅ Done"
             logger.info("Successfully processed '%s'.", filename)
+            from settings_manager import load_settings, save_settings, record_file_organised
+            _s = record_file_organised(load_settings(), filename)
+            save_settings(_s)
 
         except Exception as exc:  # noqa: BLE001
             row["Status"] = f"❌ Error: {exc}"
@@ -609,6 +628,8 @@ def _run_query_flow(question: str) -> None:
     with st.spinner("Searching your study material and asking Claude…"):
         try:
             answer = answer_question(question)
+            from settings_manager import load_settings, save_settings, record_question_asked
+            save_settings(record_question_asked(load_settings()))
         except Exception as exc:  # noqa: BLE001
             st.error(f"❌ Failed to get an answer: {exc}")
             logger.exception("Query engine failed.")

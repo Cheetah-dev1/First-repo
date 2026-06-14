@@ -54,6 +54,12 @@ DEFAULTS: dict = {
         "date": "",
         "total": 0,
     },
+    "stats": {
+        "files_organised": 0,
+        "questions_asked": 0,
+        "last_scan": "",
+        "recent_files": [],
+    },
 }
 
 
@@ -147,4 +153,21 @@ def track_tokens(settings: dict, tokens: int) -> dict:
     if settings["token_usage"].get("date") != today:
         settings["token_usage"] = {"date": today, "total": 0}
     settings["token_usage"]["total"] = settings["token_usage"].get("total", 0) + tokens
+    return settings
+
+
+def record_file_organised(settings: dict, filename: str) -> dict:
+    stats = settings.setdefault("stats", DEFAULTS["stats"].copy())
+    stats["files_organised"] = stats.get("files_organised", 0) + 1
+    stats["last_scan"] = str(date.today())
+    recent = stats.get("recent_files", [])
+    if filename not in recent:
+        recent.insert(0, filename)
+    stats["recent_files"] = recent[:3]
+    return settings
+
+
+def record_question_asked(settings: dict) -> dict:
+    stats = settings.setdefault("stats", DEFAULTS["stats"].copy())
+    stats["questions_asked"] = stats.get("questions_asked", 0) + 1
     return settings
