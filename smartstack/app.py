@@ -801,7 +801,7 @@ def page_settings() -> None:
         else:
             st.warning("⚠️ Enter a model name and API key to use a custom vision model")
     else:
-        st.info("`groq/llama-3.2-11b-vision-preview` — no extra key needed")
+        st.info("`groq/meta-llama/llama-4-scout-17b-16e-instruct` — no extra key needed")
 
     st.divider()
 

@@ -25,7 +25,7 @@ DEFAULTS: dict = {
     },
     "vision_model": {
         "use_custom": False,
-        "model": "groq/llama-3.2-11b-vision-preview",
+        "model": "groq/meta-llama/llama-4-scout-17b-16e-instruct",
         "api_key": "",
         "base_url": "",
     },
@@ -115,7 +115,7 @@ def get_vision_model_kwargs(settings: dict) -> dict:
             kwargs["api_base"] = vm["base_url"]
         return kwargs
     from config import GROQ_API_KEY
-    return {"model": "groq/llama-3.2-11b-vision-preview", "api_key": GROQ_API_KEY}
+    return {"model": "groq/meta-llama/llama-4-scout-17b-16e-instruct", "api_key": GROQ_API_KEY}
 
 
 def get_category_folders(settings: dict) -> dict:
