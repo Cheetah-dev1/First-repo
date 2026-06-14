@@ -124,13 +124,12 @@ def _build_theme_css(primary: str, secondary: str, button: str, preset: str = "l
 h1, h2, h3, h4 {{ color: {head_color} !important; }}
 .stButton > button {{
     background-color: {button} !important;
-    color: {"#FFFFFF" if preset == "custom" else btn_text} !important;
-    {"text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000 !important;" if preset == "custom" else ""}
+    color: {btn_text} !important;
     font-weight: 700 !important;
     border: none !important;
     border-radius: 6px !important;
 }}
-.stButton > button:hover {{ background-color: {btn_hover} !important; color: {"#FFFFFF" if preset == "custom" else btn_text} !important; }}
+.stButton > button:hover {{ background-color: {btn_hover} !important; color: {btn_text} !important; }}
 .stButton > button[kind="primary"] {{ background-color: {button} !important; color: {btn_text} !important; }}
 .stTextInput input, .stTextArea textarea, .stNumberInput input {{
     background-color: {input_bg} !important;
@@ -933,7 +932,6 @@ def page_settings() -> None:
             col_button    = st.color_picker("Button colour",
                                             value=saved_colors.get("button",    "#8B7355"),
                                             key="color_button")
-        st.caption("Button text: white with black outline.")
 
     st.divider()
 
