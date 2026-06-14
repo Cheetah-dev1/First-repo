@@ -159,7 +159,11 @@ hr {{ border-color: {input_border} !important; }}
 def _inject_theme_css() -> None:
     from settings_manager import load_settings
     settings = load_settings()
-    colors = settings.get("colors", _THEME_PRESETS["light"])
+    preset = settings.get("preset", "light")
+    if preset in _THEME_PRESETS:
+        colors = _THEME_PRESETS[preset]
+    else:
+        colors = settings.get("colors", _THEME_PRESETS["light"])
     primary   = colors.get("primary",   _THEME_PRESETS["light"]["primary"])
     secondary = colors.get("secondary", _THEME_PRESETS["light"]["secondary"])
     button    = colors.get("button",    _THEME_PRESETS["light"]["button"])
@@ -856,36 +860,50 @@ def page_settings() -> None:
 
     # ── Theme ─────────────────────────────────────────────────────────────────
     st.subheader("🎨 Colour Palette")
-    saved_colors = settings.get("colors", _THEME_PRESETS["light"])
 
-    pc1, pc2 = st.columns(2)
-    with pc1:
-        if st.button("🌤️ Light preset", use_container_width=True):
-            for k, v in _THEME_PRESETS["light"].items():
-                st.session_state[f"color_{k}"] = v
-    with pc2:
-        if st.button("🌙 Dark preset", use_container_width=True):
-            for k, v in _THEME_PRESETS["dark"].items():
-                st.session_state[f"color_{k}"] = v
+    _preset_labels = ["🌤️ Light", "🌙 Dark", "🎨 Custom"]
+    _preset_keys   = ["light", "dark", "custom"]
+    saved_preset   = settings.get("preset", "light")
+    preset_idx     = _preset_keys.index(saved_preset) if saved_preset in _preset_keys else 0
 
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        col_primary   = st.color_picker("Primary (background)",
-                                        value=st.session_state.get("color_primary",   saved_colors.get("primary",   "#FFFFFF")),
-                                        key="color_primary")
-    with c2:
-        col_secondary = st.color_picker("Secondary (sidebar)",
-                                        value=st.session_state.get("color_secondary", saved_colors.get("secondary", "#F5EDD8")),
-                                        key="color_secondary")
-    with c3:
-        col_button    = st.color_picker("Button colour",
-                                        value=st.session_state.get("color_button",    saved_colors.get("button",    "#8B7355")),
-                                        key="color_button")
+    chosen_preset = st.radio("Theme preset", _preset_labels, index=preset_idx, horizontal=True,
+                             label_visibility="collapsed")
+    preset_val = _preset_keys[_preset_labels.index(chosen_preset)]
 
-    # Live preview of button text color logic
-    btn_txt = _button_text_color(col_button)
-    btn_txt_label = "light" if btn_txt.startswith("#F") else "dark"
-    st.caption(f"Button text will be **{btn_txt_label}** (`{btn_txt}`) based on hue proximity to blue.")
+    if preset_val == "light":
+        col_primary, col_secondary, col_button = (
+            _THEME_PRESETS["light"]["primary"],
+            _THEME_PRESETS["light"]["secondary"],
+            _THEME_PRESETS["light"]["button"],
+        )
+        st.caption("White background · Warm beige sidebar · Brown buttons")
+
+    elif preset_val == "dark":
+        col_primary, col_secondary, col_button = (
+            _THEME_PRESETS["dark"]["primary"],
+            _THEME_PRESETS["dark"]["secondary"],
+            _THEME_PRESETS["dark"]["button"],
+        )
+        st.caption("Near-black background · Navy sidebar · Navy-blue buttons")
+
+    else:  # custom
+        saved_colors = settings.get("colors", _THEME_PRESETS["light"])
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            col_primary   = st.color_picker("Primary (background)",
+                                            value=saved_colors.get("primary",   "#FFFFFF"),
+                                            key="color_primary")
+        with c2:
+            col_secondary = st.color_picker("Secondary (sidebar)",
+                                            value=saved_colors.get("secondary", "#F5EDD8"),
+                                            key="color_secondary")
+        with c3:
+            col_button    = st.color_picker("Button colour",
+                                            value=saved_colors.get("button",    "#8B7355"),
+                                            key="color_button")
+        btn_txt = _button_text_color(col_button)
+        btn_txt_label = "light" if btn_txt.startswith("#F") else "dark"
+        st.caption(f"Button text will be **{btn_txt_label}** (`{btn_txt}`) — auto-picked from hue proximity to blue.")
 
     st.divider()
 
@@ -915,7 +933,8 @@ def page_settings() -> None:
             "delay_seconds":  delay_secs,
         }
         new_settings["sheets"]  = {"sheet_name": sheet_name or "SmartStack Log"}
-        new_settings["colors"]  = {
+        new_settings["preset"] = preset_val
+        new_settings["colors"] = {
             "primary":   col_primary,
             "secondary": col_secondary,
             "button":    col_button,

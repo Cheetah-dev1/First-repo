@@ -42,6 +42,7 @@ DEFAULTS: dict = {
     "sheets": {
         "sheet_name": "SmartStack Log",
     },
+    "preset": "light",
     "colors": {
         "primary":   "#FFFFFF",
         "secondary": "#F5EDD8",
