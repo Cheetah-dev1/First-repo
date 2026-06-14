@@ -396,24 +396,29 @@ st.sidebar.markdown(f"""
 """, unsafe_allow_html=True)
 
 _render_sidebar_profile()
+
+# ── Quick Stats ───────────────────────────────────────────────────────────────
+st.sidebar.markdown("---")
+_stats = __import__("settings_manager").load_settings().get("stats", {})
+_last  = _stats.get("last_scan", "") or "Never"
+st.sidebar.markdown(
+    f"📁 **{_stats.get('files_organised', 0)}** files organised  \n"
+    f"❓ **{_stats.get('questions_asked', 0)}** questions asked  \n"
+    f"🕒 Last scan: **{_last}**"
+)
+
+# ── Navigation ────────────────────────────────────────────────────────────────
 st.sidebar.markdown("---")
 page = st.sidebar.radio(
     "Navigate",
     ["Organise My Drive", "Ask a Question", "Reclassify Files", "Settings"],
     index=0,
 )
-st.sidebar.markdown("---")
 
-# ── Quick Stats + Recent Files ────────────────────────────────────────────────
-_stats = __import__("settings_manager").load_settings().get("stats", {})
-_last  = _stats.get("last_scan", "") or "Never"
-st.sidebar.markdown(
-    f"📁 **{_stats.get('files_organised', 0)}** files organised &nbsp;·&nbsp; "
-    f"❓ **{_stats.get('questions_asked', 0)}** questions asked  \n"
-    f"🕒 Last scan: **{_last}**"
-)
+# ── Recent Files ──────────────────────────────────────────────────────────────
 _recent = _stats.get("recent_files", [])
 if _recent:
+    st.sidebar.markdown("---")
     st.sidebar.markdown("**Recently organised:**")
     for _rf in _recent:
         st.sidebar.caption(f"📄 {_rf}")
