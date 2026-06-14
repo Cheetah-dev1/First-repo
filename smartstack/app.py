@@ -31,9 +31,17 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Page config must be the very first Streamlit call
 # ---------------------------------------------------------------------------
+_LOGO_PATH = os.path.join(os.path.dirname(__file__), "logo.png")
+
+try:
+    from PIL import Image as _PILImage
+    _page_icon = _PILImage.open(_LOGO_PATH) if os.path.exists(_LOGO_PATH) else "📚"
+except Exception:
+    _page_icon = "📚"
+
 st.set_page_config(
     page_title="SmartStack",
-    page_icon="📚",
+    page_icon=_page_icon,
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -363,8 +371,11 @@ def _render_sidebar_profile() -> None:
                         st.rerun()
 
 
+if os.path.exists(_LOGO_PATH):
+    st.logo(_LOGO_PATH, size="large")
+
 _render_sidebar_profile()
-st.sidebar.title("📚 SmartStack")
+st.sidebar.title("SmartStack")
 st.sidebar.markdown("---")
 page = st.sidebar.radio(
     "Navigate",
@@ -801,7 +812,7 @@ def page_settings() -> None:
         else:
             st.warning("⚠️ Enter a model name and API key to use a custom vision model")
     else:
-        st.info("`groq/llama-3.2-11b-vision-preview` — no extra key needed")
+        st.info("`groq/meta-llama/llama-4-scout-17b-16e-instruct` — no extra key needed")
 
     st.divider()
 
