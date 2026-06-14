@@ -42,8 +42,13 @@ DEFAULTS: dict = {
     "sheets": {
         "sheet_name": "SmartStack Log",
     },
-    "theme": "light",
+    "colors": {
+        "primary":   "#FFFFFF",
+        "secondary": "#F5EDD8",
+        "button":    "#8B7355",
+    },
     "directives": "",
+
     "token_usage": {
         "date": "",
         "total": 0,

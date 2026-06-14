@@ -39,103 +39,131 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------------------
-# Theme CSS — injected every render so switching is instant (no restart)
+# Theme CSS — generated from saved color palette, injected every render
 # ---------------------------------------------------------------------------
-_LIGHT_CSS = """
+
+# Built-in presets
+_THEME_PRESETS = {
+    "light": {"primary": "#FFFFFF", "secondary": "#F5EDD8", "button": "#8B7355"},
+    "dark":  {"primary": "#05050D", "secondary": "#0C1829", "button": "#1B3A5C"},
+}
+
+
+def _hex_to_hsl(hex_color: str) -> tuple[float, float, float]:
+    """Return (hue 0-360, saturation 0-1, lightness 0-1) for a hex color."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16) / 255, int(h[2:4], 16) / 255, int(h[4:6], 16) / 255
+    cmax, cmin = max(r, g, b), min(r, g, b)
+    delta = cmax - cmin
+    l = (cmax + cmin) / 2
+    if delta == 0:
+        return 0.0, 0.0, l
+    s = delta / (1 - abs(2 * l - 1))
+    if cmax == r:
+        hue = 60 * (((g - b) / delta) % 6)
+    elif cmax == g:
+        hue = 60 * (((b - r) / delta) + 2)
+    else:
+        hue = 60 * (((r - g) / delta) + 4)
+    return hue % 360, s, l
+
+
+def _button_text_color(hex_color: str) -> str:
+    """
+    Auto-pick button text color based on hue proximity to blue.
+    Blue (hue ~240°) is perceptually dark even when saturated, so it needs
+    light text. We treat any hue within 90° of blue (150–330°) as 'blue-ish'
+    and return near-white; everything else gets dark text.
+    """
+    try:
+        hue, sat, lit = _hex_to_hsl(hex_color)
+        # Very light colors (high lightness) always get dark text
+        if lit > 0.65:
+            return "#1a1a1a"
+        # Very dark colors always get light text
+        if lit < 0.35:
+            return "#F0F4FF"
+        # Mid-range: decide by hue proximity to blue (240°)
+        blue_dist = min(abs(hue - 240), 360 - abs(hue - 240))
+        return "#F0F4FF" if blue_dist <= 90 else "#1a1a1a"
+    except Exception:
+        return "#1a1a1a"
+
+
+def _darken(hex_color: str, amount: float = 0.15) -> str:
+    """Return a slightly darkened version of hex_color for hover states."""
+    try:
+        h = hex_color.lstrip("#")
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        r = max(0, int(r * (1 - amount)))
+        g = max(0, int(g * (1 - amount)))
+        b = max(0, int(b * (1 - amount)))
+        return f"#{r:02x}{g:02x}{b:02x}"
+    except Exception:
+        return hex_color
+
+
+def _is_dark_bg(hex_color: str) -> bool:
+    """True if background is dark enough to need light text/inputs."""
+    try:
+        _, _, lit = _hex_to_hsl(hex_color)
+        return lit < 0.45
+    except Exception:
+        return False
+
+
+def _build_theme_css(primary: str, secondary: str, button: str) -> str:
+    btn_text   = _button_text_color(button)
+    btn_hover  = _darken(button)
+    dark_bg    = _is_dark_bg(primary)
+    text_color = "#D8E0F0" if dark_bg else "#1a1a1a"
+    head_color = "#A8C4E8" if dark_bg else "#2C2416"
+    side_text  = "#C5D8F0" if _is_dark_bg(secondary) else "#2a1f0e"
+    input_bg   = _darken(primary, -0.04) if dark_bg else _darken(primary, 0.03)
+    input_border = _darken(secondary, -0.1) if dark_bg else _darken(secondary, 0.15)
+
+    return f"""
 <style>
-/* ── Main background ─────────────────────────────── */
-.stApp, .stApp > header, [data-testid="stAppViewContainer"] {
-    background-color: #FFFFFF !important;
-    color: #1a1a1a !important;
-}
-/* ── Top toolbar ─────────────────────────────────── */
-[data-testid="stHeader"] {
-    background-color: #FFFFFF !important;
-}
-/* ── Sidebar ─────────────────────────────────────── */
-[data-testid="stSidebar"], [data-testid="stSidebar"] > div:first-child {
-    background-color: #F5EDD8 !important;
-}
-[data-testid="stSidebar"] * { color: #2a1f0e !important; }
-/* ── Text ────────────────────────────────────────── */
-.stMarkdown, .stMarkdown p, .stText, label, span, p { color: #1a1a1a; }
-h1, h2, h3, h4 { color: #2C2416 !important; }
-/* ── Buttons ─────────────────────────────────────── */
-.stButton > button {
-    background-color: #8B7355 !important;
-    color: #FFFFFF !important;
+.stApp, .stApp > header, [data-testid="stAppViewContainer"] {{
+    background-color: {primary} !important;
+    color: {text_color} !important;
+}}
+[data-testid="stHeader"] {{ background-color: {primary} !important; }}
+[data-testid="stSidebar"], [data-testid="stSidebar"] > div:first-child {{
+    background-color: {secondary} !important;
+}}
+[data-testid="stSidebar"] * {{ color: {side_text} !important; }}
+.stMarkdown, .stMarkdown p, .stText, label, span, p {{ color: {text_color}; }}
+h1, h2, h3, h4 {{ color: {head_color} !important; }}
+.stButton > button {{
+    background-color: {button} !important;
+    color: {btn_text} !important;
     border: none !important;
     border-radius: 6px !important;
-}
-.stButton > button:hover { background-color: #6B5535 !important; }
-.stButton > button[kind="primary"] { background-color: #7B6345 !important; }
-/* ── Inputs ──────────────────────────────────────── */
-.stTextInput input, .stTextArea textarea, .stNumberInput input {
-    background-color: #FAF6EC !important;
-    border: 1px solid #D4C4A0 !important;
-    color: #1a1a1a !important;
-}
-/* ── Expander ────────────────────────────────────── */
-.stExpander { border: 1px solid #E0D5BC !important; background-color: #FDF9F0 !important; }
-/* ── Divider ─────────────────────────────────────── */
-hr { border-color: #E0D5BC !important; }
-/* ── Success / Info / Warning boxes ─────────────── */
-[data-testid="stNotification"] { border-radius: 6px; }
-/* ── Selectbox ───────────────────────────────────── */
-.stSelectbox > div > div { background-color: #FAF6EC !important; border-color: #D4C4A0 !important; }
-</style>
-"""
-
-_DARK_CSS = """
-<style>
-/* ── Main background ─────────────────────────────── */
-.stApp, .stApp > header, [data-testid="stAppViewContainer"] {
-    background-color: #05050D !important;
-    color: #D8E0F0 !important;
-}
-/* ── Top toolbar ─────────────────────────────────── */
-[data-testid="stHeader"] {
-    background-color: #05050D !important;
-}
-/* ── Sidebar ─────────────────────────────────────── */
-[data-testid="stSidebar"], [data-testid="stSidebar"] > div:first-child {
-    background-color: #0C1829 !important;
-}
-[data-testid="stSidebar"] * { color: #C5D8F0 !important; }
-/* ── Text ────────────────────────────────────────── */
-.stMarkdown, .stMarkdown p, .stText, label, span, p { color: #D8E0F0; }
-h1, h2, h3, h4 { color: #A8C4E8 !important; }
-/* ── Buttons ─────────────────────────────────────── */
-.stButton > button {
-    background-color: #1B3A5C !important;
-    color: #D8E0F0 !important;
-    border: 1px solid #2A5A8C !important;
-    border-radius: 6px !important;
-}
-.stButton > button:hover { background-color: #2A5A8C !important; color: #FFFFFF !important; }
-.stButton > button[kind="primary"] { background-color: #1E4D7A !important; }
-/* ── Inputs ──────────────────────────────────────── */
-.stTextInput input, .stTextArea textarea, .stNumberInput input {
-    background-color: #0D1829 !important;
-    border: 1px solid #1E3A5F !important;
-    color: #D8E0F0 !important;
-}
-/* ── Expander ────────────────────────────────────── */
-.stExpander { border: 1px solid #1E3A5F !important; background-color: #0C1829 !important; }
-/* ── Divider ─────────────────────────────────────── */
-hr { border-color: #1E3A5F !important; }
-/* ── Selectbox ───────────────────────────────────── */
-.stSelectbox > div > div { background-color: #0D1829 !important; border-color: #1E3A5F !important; }
-/* ── Progress bar track ──────────────────────────── */
-[data-testid="stProgressBar"] > div { background-color: #1E3A5F !important; }
+}}
+.stButton > button:hover {{ background-color: {btn_hover} !important; color: {btn_text} !important; }}
+.stButton > button[kind="primary"] {{ background-color: {button} !important; color: {btn_text} !important; }}
+.stTextInput input, .stTextArea textarea, .stNumberInput input {{
+    background-color: {input_bg} !important;
+    border: 1px solid {input_border} !important;
+    color: {text_color} !important;
+}}
+.stExpander {{ border: 1px solid {input_border} !important; background-color: {secondary} !important; }}
+hr {{ border-color: {input_border} !important; }}
+.stSelectbox > div > div {{ background-color: {input_bg} !important; border-color: {input_border} !important; }}
+[data-testid="stProgressBar"] > div {{ background-color: {input_border} !important; }}
 </style>
 """
 
 
 def _inject_theme_css() -> None:
     from settings_manager import load_settings
-    theme = load_settings().get("theme", "light")
-    st.markdown(_DARK_CSS if theme == "dark" else _LIGHT_CSS, unsafe_allow_html=True)
+    settings = load_settings()
+    colors = settings.get("colors", _THEME_PRESETS["light"])
+    primary   = colors.get("primary",   _THEME_PRESETS["light"]["primary"])
+    secondary = colors.get("secondary", _THEME_PRESETS["light"]["secondary"])
+    button    = colors.get("button",    _THEME_PRESETS["light"]["button"])
+    st.markdown(_build_theme_css(primary, secondary, button), unsafe_allow_html=True)
 
 
 _inject_theme_css()
@@ -827,11 +855,37 @@ def page_settings() -> None:
     st.divider()
 
     # ── Theme ─────────────────────────────────────────────────────────────────
-    st.subheader("🎨 Theme")
-    theme_idx = 1 if settings.get("theme") == "dark" else 0
-    theme = st.radio("Theme", ["Light", "Dark"], index=theme_idx, horizontal=True,
-                     label_visibility="collapsed")
-    theme_val = theme.lower()
+    st.subheader("🎨 Colour Palette")
+    saved_colors = settings.get("colors", _THEME_PRESETS["light"])
+
+    pc1, pc2 = st.columns(2)
+    with pc1:
+        if st.button("🌤️ Light preset", use_container_width=True):
+            for k, v in _THEME_PRESETS["light"].items():
+                st.session_state[f"color_{k}"] = v
+    with pc2:
+        if st.button("🌙 Dark preset", use_container_width=True):
+            for k, v in _THEME_PRESETS["dark"].items():
+                st.session_state[f"color_{k}"] = v
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        col_primary   = st.color_picker("Primary (background)",
+                                        value=st.session_state.get("color_primary",   saved_colors.get("primary",   "#FFFFFF")),
+                                        key="color_primary")
+    with c2:
+        col_secondary = st.color_picker("Secondary (sidebar)",
+                                        value=st.session_state.get("color_secondary", saved_colors.get("secondary", "#F5EDD8")),
+                                        key="color_secondary")
+    with c3:
+        col_button    = st.color_picker("Button colour",
+                                        value=st.session_state.get("color_button",    saved_colors.get("button",    "#8B7355")),
+                                        key="color_button")
+
+    # Live preview of button text color logic
+    btn_txt = _button_text_color(col_button)
+    btn_txt_label = "light" if btn_txt.startswith("#F") else "dark"
+    st.caption(f"Button text will be **{btn_txt_label}** (`{btn_txt}`) based on hue proximity to blue.")
 
     st.divider()
 
@@ -860,8 +914,12 @@ def page_settings() -> None:
             "max_pages":      max_pages,
             "delay_seconds":  delay_secs,
         }
-        new_settings["sheets"]     = {"sheet_name": sheet_name or "SmartStack Log"}
-        new_settings["theme"]      = theme_val
+        new_settings["sheets"]  = {"sheet_name": sheet_name or "SmartStack Log"}
+        new_settings["colors"]  = {
+            "primary":   col_primary,
+            "secondary": col_secondary,
+            "button":    col_button,
+        }
         save_settings(new_settings)
 
         st.success("✅ Settings saved!")
