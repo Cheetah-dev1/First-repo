@@ -371,23 +371,40 @@ def _render_sidebar_profile() -> None:
                         st.rerun()
 
 
-if os.path.exists(_LOGO_PATH):
-    import base64 as _b64
-    with open(_LOGO_PATH, "rb") as _f:
-        _logo_b64 = _b64.b64encode(_f.read()).decode()
-    st.sidebar.markdown(f"""
-<div style="display:flex;align-items:center;gap:12px;padding:6px 0 10px 0;">
-  <img src="data:image/png;base64,{_logo_b64}"
-       style="height:54px;width:auto;flex-shrink:0;">
-  <span style="font-size:24px;font-weight:800;line-height:1;letter-spacing:-0.5px;">
-    <span style="color:#1a1a1a;">Smart</span><span style="background:linear-gradient(90deg,#FFB800,#FF5500);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Stack</span>
-  </span>
-</div>
-""", unsafe_allow_html=True)
+_LOGO2_PATH = os.path.join(os.path.dirname(__file__), "logo2.png")
+
+# Determine current theme for sidebar branding
+_sb_settings = __import__("settings_manager").load_settings()
+_sb_preset   = _sb_settings.get("preset", "light")
+_sb_is_dark  = (
+    _sb_preset == "dark" or
+    (_sb_preset == "custom" and _is_dark_bg(_sb_settings.get("colors", {}).get("secondary", "#F5EDD8")))
+)
+
+if _sb_is_dark:
+    _smart_color    = "#000000"
+    _stack_gradient = "linear-gradient(90deg,#00C6FF,#7B2FBE)"  # cool blue → purple
+    _active_logo    = _LOGO2_PATH if os.path.exists(_LOGO2_PATH) else _LOGO_PATH
 else:
-    st.sidebar.markdown("""
-<div style="font-size:24px;font-weight:800;padding:6px 0 10px 0;">
-  <span style="color:#1a1a1a;">Smart</span><span style="background:linear-gradient(90deg,#FFB800,#FF5500);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Stack</span>
+    _smart_color    = "#FFFFFF"
+    _stack_gradient = "linear-gradient(90deg,#FFB800,#FF5500)"  # warm yellow → orange
+    _active_logo    = _LOGO_PATH
+
+import base64 as _b64
+
+if os.path.exists(_active_logo):
+    with open(_active_logo, "rb") as _f:
+        _logo_b64 = _b64.b64encode(_f.read()).decode()
+    _logo_img = f'<img src="data:image/png;base64,{_logo_b64}" style="height:54px;width:auto;flex-shrink:0;">'
+else:
+    _logo_img = ""
+
+st.sidebar.markdown(f"""
+<div style="display:flex;align-items:center;gap:12px;padding:6px 0 10px 0;">
+  {_logo_img}
+  <span style="font-size:24px;font-weight:800;line-height:1;letter-spacing:-0.5px;">
+    <span style="color:{_smart_color};">Smart</span><span style="background:{_stack_gradient};-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Stack</span>
+  </span>
 </div>
 """, unsafe_allow_html=True)
 
