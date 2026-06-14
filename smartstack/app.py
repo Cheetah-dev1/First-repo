@@ -39,6 +39,108 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------------------
+# Theme CSS — injected every render so switching is instant (no restart)
+# ---------------------------------------------------------------------------
+_LIGHT_CSS = """
+<style>
+/* ── Main background ─────────────────────────────── */
+.stApp, .stApp > header, [data-testid="stAppViewContainer"] {
+    background-color: #FFFFFF !important;
+    color: #1a1a1a !important;
+}
+/* ── Top toolbar ─────────────────────────────────── */
+[data-testid="stHeader"] {
+    background-color: #FFFFFF !important;
+}
+/* ── Sidebar ─────────────────────────────────────── */
+[data-testid="stSidebar"], [data-testid="stSidebar"] > div:first-child {
+    background-color: #F5EDD8 !important;
+}
+[data-testid="stSidebar"] * { color: #2a1f0e !important; }
+/* ── Text ────────────────────────────────────────── */
+.stMarkdown, .stMarkdown p, .stText, label, span, p { color: #1a1a1a; }
+h1, h2, h3, h4 { color: #2C2416 !important; }
+/* ── Buttons ─────────────────────────────────────── */
+.stButton > button {
+    background-color: #8B7355 !important;
+    color: #FFFFFF !important;
+    border: none !important;
+    border-radius: 6px !important;
+}
+.stButton > button:hover { background-color: #6B5535 !important; }
+.stButton > button[kind="primary"] { background-color: #7B6345 !important; }
+/* ── Inputs ──────────────────────────────────────── */
+.stTextInput input, .stTextArea textarea, .stNumberInput input {
+    background-color: #FAF6EC !important;
+    border: 1px solid #D4C4A0 !important;
+    color: #1a1a1a !important;
+}
+/* ── Expander ────────────────────────────────────── */
+.stExpander { border: 1px solid #E0D5BC !important; background-color: #FDF9F0 !important; }
+/* ── Divider ─────────────────────────────────────── */
+hr { border-color: #E0D5BC !important; }
+/* ── Success / Info / Warning boxes ─────────────── */
+[data-testid="stNotification"] { border-radius: 6px; }
+/* ── Selectbox ───────────────────────────────────── */
+.stSelectbox > div > div { background-color: #FAF6EC !important; border-color: #D4C4A0 !important; }
+</style>
+"""
+
+_DARK_CSS = """
+<style>
+/* ── Main background ─────────────────────────────── */
+.stApp, .stApp > header, [data-testid="stAppViewContainer"] {
+    background-color: #05050D !important;
+    color: #D8E0F0 !important;
+}
+/* ── Top toolbar ─────────────────────────────────── */
+[data-testid="stHeader"] {
+    background-color: #05050D !important;
+}
+/* ── Sidebar ─────────────────────────────────────── */
+[data-testid="stSidebar"], [data-testid="stSidebar"] > div:first-child {
+    background-color: #0C1829 !important;
+}
+[data-testid="stSidebar"] * { color: #C5D8F0 !important; }
+/* ── Text ────────────────────────────────────────── */
+.stMarkdown, .stMarkdown p, .stText, label, span, p { color: #D8E0F0; }
+h1, h2, h3, h4 { color: #A8C4E8 !important; }
+/* ── Buttons ─────────────────────────────────────── */
+.stButton > button {
+    background-color: #1B3A5C !important;
+    color: #D8E0F0 !important;
+    border: 1px solid #2A5A8C !important;
+    border-radius: 6px !important;
+}
+.stButton > button:hover { background-color: #2A5A8C !important; color: #FFFFFF !important; }
+.stButton > button[kind="primary"] { background-color: #1E4D7A !important; }
+/* ── Inputs ──────────────────────────────────────── */
+.stTextInput input, .stTextArea textarea, .stNumberInput input {
+    background-color: #0D1829 !important;
+    border: 1px solid #1E3A5F !important;
+    color: #D8E0F0 !important;
+}
+/* ── Expander ────────────────────────────────────── */
+.stExpander { border: 1px solid #1E3A5F !important; background-color: #0C1829 !important; }
+/* ── Divider ─────────────────────────────────────── */
+hr { border-color: #1E3A5F !important; }
+/* ── Selectbox ───────────────────────────────────── */
+.stSelectbox > div > div { background-color: #0D1829 !important; border-color: #1E3A5F !important; }
+/* ── Progress bar track ──────────────────────────── */
+[data-testid="stProgressBar"] > div { background-color: #1E3A5F !important; }
+</style>
+"""
+
+
+def _inject_theme_css() -> None:
+    from settings_manager import load_settings
+    theme = load_settings().get("theme", "light")
+    st.markdown(_DARK_CSS if theme == "dark" else _LIGHT_CSS, unsafe_allow_html=True)
+
+
+_inject_theme_css()
+
+# ---------------------------------------------------------------------------
 # Lazy imports — delayed so Streamlit can render the page before doing OAuth
 # ---------------------------------------------------------------------------
 def _import_modules():
@@ -613,7 +715,7 @@ def page_settings() -> None:
     """Render the full Settings page."""
     from datetime import date as _date
     from settings_manager import (
-        load_settings, save_settings, apply_theme,
+        load_settings, save_settings,
         GROQ_FREE_TIER_DAILY_LIMIT,
     )
 
@@ -762,12 +864,8 @@ def page_settings() -> None:
         new_settings["theme"]      = theme_val
         save_settings(new_settings)
 
-        theme_changed = theme_val != settings.get("theme", "light")
-        if theme_changed:
-            apply_theme(theme_val)
-            st.success("✅ Settings saved! Restart the app to apply the theme change.")
-        else:
-            st.success("✅ Settings saved!")
+        st.success("✅ Settings saved!")
+        st.rerun()
 
 
 # ===========================================================================

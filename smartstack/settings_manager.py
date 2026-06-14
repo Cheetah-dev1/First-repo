@@ -142,11 +142,3 @@ def track_tokens(settings: dict, tokens: int) -> dict:
         settings["token_usage"] = {"date": today, "total": 0}
     settings["token_usage"]["total"] = settings["token_usage"].get("total", 0) + tokens
     return settings
-
-
-def apply_theme(theme: str) -> None:
-    """Write theme to .streamlit/config.toml (takes effect on restart)."""
-    streamlit_dir = os.path.join(os.path.dirname(__file__), ".streamlit")
-    os.makedirs(streamlit_dir, exist_ok=True)
-    with open(os.path.join(streamlit_dir, "config.toml"), "w") as f:
-        f.write(f'[theme]\nbase = "{theme}"\n')
