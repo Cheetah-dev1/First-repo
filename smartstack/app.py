@@ -160,6 +160,7 @@ h1, h2, h3, h4 {{ color: {head_color} !important; }}
 hr {{ border-color: {input_border} !important; }}
 .stSelectbox > div > div {{ background-color: {input_bg} !important; border-color: {input_border} !important; }}
 [data-testid="stProgressBar"] > div {{ background-color: {input_border} !important; }}
+[data-testid="stSidebarHeader"] img {{ transform: scale(1.8); transform-origin: left center; }}
 </style>
 """
 
