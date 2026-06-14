@@ -120,7 +120,7 @@ def _is_dark_bg(hex_color: str) -> bool:
         return False
 
 
-def _build_theme_css(primary: str, secondary: str, button: str) -> str:
+def _build_theme_css(primary: str, secondary: str, button: str, preset: str = "light") -> str:
     btn_text   = _button_text_color(button)
     btn_hover  = _darken(button)
     dark_bg    = _is_dark_bg(primary)
@@ -145,13 +145,13 @@ def _build_theme_css(primary: str, secondary: str, button: str) -> str:
 h1, h2, h3, h4 {{ color: {head_color} !important; }}
 .stButton > button {{
     background-color: {button} !important;
-    color: #FFFFFF !important;
-    -webkit-text-stroke: 1px #000000 !important;
+    color: {"#FFFFFF" if preset == "custom" else btn_text} !important;
+    {"text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000 !important;" if preset == "custom" else ""}
     font-weight: 700 !important;
     border: none !important;
     border-radius: 6px !important;
 }}
-.stButton > button:hover {{ background-color: {btn_hover} !important; color: #FFFFFF !important; -webkit-text-stroke: 1px #000000 !important; }}
+.stButton > button:hover {{ background-color: {btn_hover} !important; color: {"#FFFFFF" if preset == "custom" else btn_text} !important; }}
 .stButton > button[kind="primary"] {{ background-color: {button} !important; color: {btn_text} !important; }}
 .stTextInput input, .stTextArea textarea, .stNumberInput input {{
     background-color: {input_bg} !important;
@@ -184,7 +184,7 @@ def _inject_theme_css() -> None:
     primary   = colors.get("primary",   _THEME_PRESETS["light"]["primary"])
     secondary = colors.get("secondary", _THEME_PRESETS["light"]["secondary"])
     button    = colors.get("button",    _THEME_PRESETS["light"]["button"])
-    st.markdown(_build_theme_css(primary, secondary, button), unsafe_allow_html=True)
+    st.markdown(_build_theme_css(primary, secondary, button, preset), unsafe_allow_html=True)
 
 
 _inject_theme_css()
