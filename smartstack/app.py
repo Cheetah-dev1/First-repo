@@ -145,11 +145,13 @@ def _build_theme_css(primary: str, secondary: str, button: str) -> str:
 h1, h2, h3, h4 {{ color: {head_color} !important; }}
 .stButton > button {{
     background-color: {button} !important;
-    color: {btn_text} !important;
+    color: #FFFFFF !important;
+    -webkit-text-stroke: 1px #000000 !important;
+    font-weight: 700 !important;
     border: none !important;
     border-radius: 6px !important;
 }}
-.stButton > button:hover {{ background-color: {btn_hover} !important; color: {btn_text} !important; }}
+.stButton > button:hover {{ background-color: {btn_hover} !important; color: #FFFFFF !important; -webkit-text-stroke: 1px #000000 !important; }}
 .stButton > button[kind="primary"] {{ background-color: {button} !important; color: {btn_text} !important; }}
 .stTextInput input, .stTextArea textarea, .stNumberInput input {{
     background-color: {input_bg} !important;
