@@ -796,7 +796,7 @@ def page_reclassify() -> None:
     st.markdown(f"**{len(logs)} file(s) logged.** Select a new category and click Reclassify.")
     st.markdown("---")
 
-    for entry in logs:
+    for idx, entry in enumerate(logs):
         filename = entry.get("Filename", "Unknown")
         current_category = entry.get("Category", "Study")
         topic = entry.get("Topic", "")
@@ -816,12 +816,12 @@ def page_reclassify() -> None:
                 "New category",
                 _CATEGORIES,
                 index=_CATEGORIES.index(current_category) if current_category in _CATEGORIES else 0,
-                key=f"cat_{filename}",
+                key=f"cat_{idx}_{filename}",
                 label_visibility="collapsed",
             )
 
         with col4:
-            if st.button("Reclassify", key=f"btn_{filename}"):
+            if st.button("Reclassify", key=f"btn_{idx}_{filename}"):
                 if new_category == current_category:
                     st.warning("Same category — nothing to change.")
                 else:
