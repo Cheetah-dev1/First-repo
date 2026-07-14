@@ -397,16 +397,6 @@ st.sidebar.markdown(f"""
 
 _render_sidebar_profile()
 
-# ── Quick Stats ───────────────────────────────────────────────────────────────
-st.sidebar.markdown("---")
-_stats = __import__("settings_manager").load_settings().get("stats", {})
-_last  = _stats.get("last_scan", "") or "Never"
-st.sidebar.markdown(
-    f"📁 **{_stats.get('files_organised', 0)}** files organised  \n"
-    f"❓ **{_stats.get('questions_asked', 0)}** questions asked  \n"
-    f"🕒 Last scan: **{_last}**"
-)
-
 # ── Navigation ────────────────────────────────────────────────────────────────
 st.sidebar.markdown("---")
 page = st.sidebar.radio(
@@ -442,7 +432,13 @@ def page_organise() -> None:
         "Supports PDF, Google Docs, Google Sheets, Google Slides, Word, Excel, PowerPoint, images and videos."
     )
 
-    if st.button("🔍 Scan My Drive", type="primary"):
+    _last_scan = __import__("settings_manager").load_settings().get("stats", {}).get("last_scan", "") or "Never"
+    col_scan, col_last = st.columns([2, 3])
+    with col_scan:
+        scan_clicked = st.button("🔍 Scan My Drive", type="primary")
+    with col_last:
+        st.markdown(f"<div style='padding-top:0.5rem;font-size:0.85rem;opacity:0.7'>🕒 Last scan: <b>{_last_scan}</b></div>", unsafe_allow_html=True)
+    if scan_clicked:
         _run_organise_flow()
 
     # ── Drive Explorer ────────────────────────────────────────────────────────
