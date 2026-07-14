@@ -330,7 +330,7 @@ def scan_root_for_files() -> list[dict]:
             .list(
                 q=query,
                 spaces="drive",
-                fields="nextPageToken, files(id, name, mimeType)",
+                fields="nextPageToken, files(id, name, mimeType, modifiedTime)",
                 pageToken=page_token,
             )
             .execute()
@@ -345,6 +345,79 @@ def scan_root_for_files() -> list[dict]:
 
 
 scan_root_for_pdfs = scan_root_for_files
+
+_MIME_FRIENDLY: dict[str, str] = {
+    "application/pdf": "PDF",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "Word",
+    "application/msword": "Word",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "Excel",
+    "application/vnd.ms-excel": "Excel",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "PowerPoint",
+    "application/vnd.ms-powerpoint": "PowerPoint",
+    "application/vnd.google-apps.document": "Google Doc",
+    "application/vnd.google-apps.spreadsheet": "Google Sheet",
+    "application/vnd.google-apps.presentation": "Google Slides",
+    "image/jpeg": "Image", "image/png": "Image", "image/gif": "Image",
+    "image/webp": "Image", "image/bmp": "Image", "image/tiff": "Image",
+}
+
+
+def list_drive_contents() -> dict:
+    """
+    Return a dict with:
+      "loose":      list of files in Drive root (unorganised)
+      "organised":  dict of {category_name: [files]} for each category folder
+    Each file is {name, type, modified}.
+    """
+    service  = _get_drive_service()
+    root_id  = _get_root_folder_id(service)
+
+    try:
+        from settings_manager import load_settings, get_category_folders
+        category_folders = get_category_folders(load_settings())
+    except Exception:
+        category_folders = CATEGORY_FOLDERS
+
+    def _list_in(parent_id: str) -> list[dict]:
+        results, page_token = [], None
+        while True:
+            resp = service.files().list(
+                q=f"'{parent_id}' in parents and trashed = false and mimeType != 'application/vnd.google-apps.folder'",
+                spaces="drive",
+                fields="nextPageToken, files(id, name, mimeType, modifiedTime)",
+                pageToken=page_token,
+            ).execute()
+            for f in resp.get("files", []):
+                mod = (f.get("modifiedTime") or "")[:10]
+                results.append({
+                    "name":     f["name"],
+                    "type":     _MIME_FRIENDLY.get(f.get("mimeType", ""), "File"),
+                    "modified": mod,
+                })
+            page_token = resp.get("nextPageToken")
+            if not page_token:
+                break
+        return results
+
+    loose = []
+    for f in scan_root_for_files():
+        mod = (f.get("modifiedTime") or "")[:10]
+        loose.append({
+            "name":     f["name"],
+            "type":     _MIME_FRIENDLY.get(f.get("mimeType", ""), "File"),
+            "modified": mod,
+        })
+
+    organised: dict[str, list] = {}
+    for category, folder_name in category_folders.items():
+        try:
+            folder_id = _find_or_create_folder(service, folder_name, root_id)
+            organised[category] = _list_in(folder_id)
+        except Exception as exc:
+            logger.warning("Could not list folder '%s': %s", folder_name, exc)
+            organised[category] = []
+
+    return {"loose": loose, "organised": organised}
 
 
 def move_pdf_to_category(file_id: str, category: str) -> None:

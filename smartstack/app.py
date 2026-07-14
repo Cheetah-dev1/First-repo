@@ -445,6 +445,50 @@ def page_organise() -> None:
     if st.button("🔍 Scan My Drive", type="primary"):
         _run_organise_flow()
 
+    # ── Drive Explorer ────────────────────────────────────────────────────────
+    st.divider()
+    st.subheader("📂 Drive Explorer")
+
+    col_refresh, _ = st.columns([1, 4])
+    with col_refresh:
+        if st.button("🔄 Refresh", key="refresh_explorer"):
+            st.session_state.pop("_drive_contents", None)
+
+    if "_drive_contents" not in st.session_state:
+        with st.spinner("Loading your Drive…"):
+            try:
+                from drive_manager import list_drive_contents
+                st.session_state["_drive_contents"] = list_drive_contents()
+            except Exception as exc:
+                st.error(f"Could not load Drive: {exc}")
+                st.session_state["_drive_contents"] = None
+
+    contents = st.session_state.get("_drive_contents")
+    if contents is None:
+        pass
+    else:
+        loose = contents.get("loose", [])
+        if loose:
+            st.markdown(f"**📥 Loose files ({len(loose)}) — not yet organised**")
+            st.dataframe(
+                pd.DataFrame(loose).rename(columns={"name": "Filename", "type": "Type", "modified": "Last Modified"}),
+                use_container_width=True, hide_index=True,
+            )
+        else:
+            st.success("✅ No loose files — your Drive root is clean!")
+
+        organised = contents.get("organised", {})
+        total_organised = sum(len(v) for v in organised.values())
+        if total_organised:
+            st.markdown(f"**✅ Organised files ({total_organised})**")
+            for category, files in organised.items():
+                if files:
+                    with st.expander(f"📁 {category} ({len(files)})"):
+                        st.dataframe(
+                            pd.DataFrame(files).rename(columns={"name": "Filename", "type": "Type", "modified": "Last Modified"}),
+                            use_container_width=True, hide_index=True,
+                        )
+
 
 def _run_organise_flow() -> None:
     """Execute the full scan → classify → move pipeline and display results."""
