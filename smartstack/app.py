@@ -816,12 +816,12 @@ def page_reclassify() -> None:
                 "New category",
                 _CATEGORIES,
                 index=_CATEGORIES.index(current_category) if current_category in _CATEGORIES else 0,
-                key=f"cat_{idx}_{filename}",
+                key=f"cat_{idx}",
                 label_visibility="collapsed",
             )
 
         with col4:
-            if st.button("Reclassify", key=f"btn_{idx}_{filename}"):
+            if st.button("Reclassify", key=f"btn_{idx}"):
                 if new_category == current_category:
                     st.warning("Same category — nothing to change.")
                 else:
